@@ -222,7 +222,8 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
 		    attrs[XFRMA_ENCAP]		||
 		    attrs[XFRMA_SEC_CTX]	||
 		    attrs[XFRMA_TFCPAD]		||
-		    !attrs[XFRMA_COADDR])
+		    !attrs[XFRMA_COADDR]	||
+		    !attrs[XFRMA_CATADDR])
 			goto out;
 		break;
 #endif
@@ -532,6 +533,35 @@ static void xfrm_update_ae_params(struct xfrm_state *x, struct nlattr **attrs,
 		x->replay_maxdiff = nla_get_u32(rt);
 }
 
+static unsigned int xfrmaddr_to_sockaddr(const xfrm_address_t *xa, __be16 port,
+		unsigned short family, struct sockaddr *sa)
+{
+	switch (family) {
+	case AF_INET:
+		{
+			struct sockaddr_in *sin = (struct sockaddr_in *)sa;
+			sin->sin_family = AF_INET;
+			sin->sin_port = port;
+			sin->sin_addr.s_addr = xa->a4;
+			memset(sin->sin_zero, 0, sizeof(sin->sin_zero));
+			return 32;
+		}
+#if IS_ENABLED(CONFIG_IPV6)
+	case AF_INET6:
+		{
+			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
+			sin6->sin6_family = AF_INET6;
+			sin6->sin6_port = port;
+			sin6->sin6_flowinfo = 0;
+			sin6->sin6_addr = xa->in6;
+			sin6->sin6_scope_id = 0;
+			return 128;
+		}
+#endif
+	}
+	return 0;
+}
+
 static struct xfrm_state *xfrm_state_construct(struct net *net,
 					       struct xfrm_usersa_info *p,
 					       struct nlattr **attrs,
@@ -580,6 +610,25 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 				    sizeof(*x->coaddr), GFP_KERNEL);
 		if (x->coaddr == NULL)
 			goto error;
+	}
+
+	if (attrs[XFRMA_CATADDR]) {
+		struct sockaddr caddr;
+		struct sockaddr daddr;
+
+		x->caddr = kmemdup(nla_data(attrs[XFRMA_CATADDR]),
+				sizeof(*x->caddr), GFP_KERNEL);
+
+		if (x->caddr == NULL)
+			goto error;
+
+		/* AA_2017_05 debug stuff */
+		x->print_cat = 0;
+		xfrmaddr_to_sockaddr(x->caddr, 0, AF_INET, &caddr);
+		xfrmaddr_to_sockaddr(&x->id.daddr, 0, AF_INET, &daddr);
+		printk("AA_2017_05 setting caddr %pISc daddr %pISc", &caddr, &daddr);
+	} else {
+		x->caddr = NULL;
 	}
 
 	xfrm_mark_get(attrs, &x->mark);
@@ -839,6 +888,11 @@ static int copy_to_user_state_extra(struct xfrm_state *x,
 
 	if (x->coaddr) {
 		ret = nla_put(skb, XFRMA_COADDR, sizeof(*x->coaddr), x->coaddr);
+		if (ret)
+			goto out;
+	}
+	if (x->caddr) {
+		ret = nla_put(skb, XFRMA_COADDR, sizeof(*x->caddr), x->caddr);
 		if (ret)
 			goto out;
 	}
@@ -2435,6 +2489,7 @@ static const struct nla_policy xfrma_policy[XFRMA_MAX+1] = {
 	[XFRMA_PROTO]		= { .type = NLA_U8 },
 	[XFRMA_ADDRESS_FILTER]	= { .len = sizeof(struct xfrm_address_filter) },
 	[XFRMA_OFFLOAD_DEV]	= { .len = sizeof(struct xfrm_user_offload) },
+	[XFRMA_CATADDR]         = { .len = sizeof(xfrm_address_t) },
 };
 
 static const struct nla_policy xfrma_spd_policy[XFRMA_SPD_MAX+1] = {
@@ -2650,6 +2705,10 @@ static inline size_t xfrm_sa_len(struct xfrm_state *x)
 				    x->security->ctx_len);
 	if (x->coaddr)
 		l += nla_total_size(sizeof(*x->coaddr));
+
+	if (x->caddr)
+		l += nla_total_size(sizeof(*x->caddr));
+
 	if (x->props.extra_flags)
 		l += nla_total_size(sizeof(x->props.extra_flags));
 	if (x->xso.dev)
@@ -3086,6 +3145,19 @@ static inline size_t xfrm_mapping_msgsize(void)
 	return NLMSG_ALIGN(sizeof(struct xfrm_user_mapping));
 }
 
+static void print_mapping(struct xfrm_user_mapping *map)
+{
+	struct sockaddr old_saddr;
+	printk("AA_201705 Mapping change ");
+
+	// from iproute xfrm_mapping_print
+	// rt_addr_n2a(map->id.family, sizeof(map->old_saddr), map->old_saddr);
+
+	xfrmaddr_to_sockaddr(&map->old_saddr, map->old_sport, map->id.family,
+			&old_saddr);
+}
+
+
 static int build_mapping(struct sk_buff *skb, struct xfrm_state *x,
 			 xfrm_address_t *new_saddr, __be16 new_sport)
 {
@@ -3107,6 +3179,8 @@ static int build_mapping(struct sk_buff *skb, struct xfrm_state *x,
 	um->new_sport = new_sport;
 	um->old_sport = x->encap->encap_sport;
 	um->reqid = x->props.reqid;
+
+	print_mapping(um);
 
 	nlmsg_end(skb, nlh);
 	return 0;

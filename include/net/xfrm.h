@@ -179,6 +179,12 @@ struct xfrm_state {
 	/* Data for care-of address */
 	xfrm_address_t	*coaddr;
 
+	/* IPsec Client Address Translation address */
+	xfrm_address_t	*caddr;
+	/* AA_201705_debug counter */
+	int print_cat;
+
+
 	/* IPComp needs an IPIP tunnel for handling uncompressed packets */
 	struct xfrm_state	*tunnel;
 

@@ -426,6 +426,7 @@ static void xfrm_state_gc_destroy(struct xfrm_state *x)
 	kfree(x->calg);
 	kfree(x->encap);
 	kfree(x->coaddr);
+	kfree(x->caddr);
 	kfree(x->replay_esn);
 	kfree(x->preplay_esn);
 	if (x->inner_mode)
@@ -1364,6 +1365,12 @@ static struct xfrm_state *xfrm_state_clone(struct xfrm_state *orig)
 			goto error;
 	}
 
+	if (orig->caddr) {
+		x->caddr = kmemdup (orig->caddr, sizeof (*x->caddr), GFP_KERNEL);
+		if (!x->caddr)
+		goto error;
+	}
+
 	if (orig->replay_esn) {
 		if (xfrm_replay_clone(x, orig))
 			goto error;
@@ -1521,6 +1528,9 @@ out:
 			memcpy(x1->encap, x->encap, sizeof(*x1->encap));
 		if (x->coaddr && x1->coaddr) {
 			memcpy(x1->coaddr, x->coaddr, sizeof(*x1->coaddr));
+		}
+		if (x->caddr && x1->caddr) {
+			memcpy(x1->caddr, x->caddr, sizeof(*x1->caddr));
 		}
 		if (!use_spi && memcmp(&x1->sel, &x->sel, sizeof(x1->sel)))
 			memcpy(&x1->sel, &x->sel, sizeof(x1->sel));
