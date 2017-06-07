@@ -60,13 +60,13 @@ static void cat_dbug(struct xfrm_state *x,  bool dir_in)
 
 	xfrmaddr_to_sockaddr(&x->id.daddr,  0, AF_INET, &daddr);
 
-	if (x->print_cat == 0) {
+	if (x->print_cat == 0) { //print only once per flow. Only the first packet
 		x->print_cat = 1;
 		if (x->caddr == NULL)  {
 			printk("AA_2017_05 caddr is NULL for this state %pISc dir %s", &daddr, dir_in ? "in" : "out");
 		}  else  {
 			xfrmaddr_to_sockaddr(x->caddr,  0, AF_INET, &caddr);
-			printk("AA_2017_05 caddr %pISc %pISc dir %s", &caddr,
+			printk("AA_2017_05 flow caddr %pISc %pISc dir %s", &caddr,
 					&daddr, dir_in ? "in" : "out");
 		}
 	}
@@ -83,7 +83,8 @@ static void cat_translate_dbug(struct xfrm_state *x,
 	xfrm_address_t baddr;
 
 
-	// if (x->print_cat == 0 || x->print_cat == 1) {
+	// if (x->print_cat == 0 || x->print_cat == 1) { // only once fist  packet
+		/* for tcp/udp checksum debugging you need to print for every packet */
 		x->print_cat++;
 		if (dir_in) {
 			paddr.a4 = iph->daddr;
@@ -97,7 +98,7 @@ static void cat_translate_dbug(struct xfrm_state *x,
 		xfrmaddr_to_sockaddr(&paddr,  0, AF_INET, &s_paddr);
 		xfrmaddr_to_sockaddr(&baddr,  0, AF_INET, &s_baddr);
 
-		printk("AA_2017_05 caddr %pISc paddr %pISc baddr %pISc dir %s %04x %04x other order %04x %04x",
+		printk("AA_2017_05 packet caddr %pISc paddr %pISc baddr %pISc dir %s %04x %04x other order %04x %04x",
 				&s_caddr, &s_paddr, &s_baddr,
 				dir_in ? "in" : "out",
 				check_b, check_a, ntohs(check_b), ntohs(check_a));

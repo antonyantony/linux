@@ -3145,19 +3145,6 @@ static inline size_t xfrm_mapping_msgsize(void)
 	return NLMSG_ALIGN(sizeof(struct xfrm_user_mapping));
 }
 
-static void print_mapping(struct xfrm_user_mapping *map)
-{
-	struct sockaddr old_saddr;
-	printk("AA_201705 Mapping change ");
-
-	// from iproute xfrm_mapping_print
-	// rt_addr_n2a(map->id.family, sizeof(map->old_saddr), map->old_saddr);
-
-	xfrmaddr_to_sockaddr(&map->old_saddr, map->old_sport, map->id.family,
-			&old_saddr);
-}
-
-
 static int build_mapping(struct sk_buff *skb, struct xfrm_state *x,
 			 xfrm_address_t *new_saddr, __be16 new_sport)
 {
@@ -3179,8 +3166,6 @@ static int build_mapping(struct sk_buff *skb, struct xfrm_state *x,
 	um->new_sport = new_sport;
 	um->old_sport = x->encap->encap_sport;
 	um->reqid = x->props.reqid;
-
-	print_mapping(um);
 
 	nlmsg_end(skb, nlh);
 	return 0;
