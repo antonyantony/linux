@@ -434,6 +434,17 @@ EXPORT_SYMBOL(xfrm_state_free);
 
 static void ___xfrm_state_destroy(struct xfrm_state *x)
 {
+	if (x->xfrmpcpu) {
+		struct xfrm_state_pcpu *xpcpu;
+		int cpu;
+
+		for_each_cpu(cpu, cpu_possible_mask) {
+			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
+			if (xpcpu->x)
+				___xfrm_state_destroy(xpcpu->x);
+		}
+	}
+
 	tasklet_hrtimer_cancel(&x->mtimer);
 	del_timer_sync(&x->rtimer);
 	kfree(x->aead);
@@ -444,6 +455,7 @@ static void ___xfrm_state_destroy(struct xfrm_state *x)
 	kfree(x->coaddr);
 	kfree(x->replay_esn);
 	kfree(x->preplay_esn);
+	free_percpu(x->xfrmpcpu);
 	if (x->inner_mode)
 		xfrm_put_mode(x->inner_mode);
 	if (x->inner_mode_iaf)
@@ -618,6 +630,21 @@ int __xfrm_state_delete(struct xfrm_state *x)
 {
 	struct net *net = xs_net(x);
 	int err = -ESRCH;
+
+	if (x->xfrmpcpu) {
+		struct xfrm_state_pcpu *xpcpu;
+		struct xfrm_state *xc;
+		int cpu;
+
+		for_each_cpu(cpu, cpu_possible_mask) {
+			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
+			xc = xpcpu->x;
+			if (xc && xc->km.state != XFRM_STATE_DEAD) {
+				xc->km.state = XFRM_STATE_DEAD;
+				xfrm_state_put(xc);
+			}
+		}
+	}
 
 	if (x->km.state != XFRM_STATE_DEAD) {
 		x->km.state = XFRM_STATE_DEAD;
@@ -997,6 +1024,17 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 
 found:
 	x = best;
+
+	if (x && x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
+		struct xfrm_state_pcpu *xpcpu;
+
+		xpcpu = per_cpu_ptr(x->xfrmpcpu, get_cpu());
+		if (xpcpu->x)
+			x = xpcpu->x;
+
+		put_cpu();
+	}
+
 	if (!x && !error && !acquire_in_progress) {
 		if (tmpl->id.spi &&
 		    (x0 = __xfrm_state_lookup(net, mark, daddr, tmpl->id.spi,
@@ -1299,6 +1337,15 @@ int xfrm_state_add(struct xfrm_state *x)
 
 	x1 = __xfrm_state_locate(x, use_spi, family);
 	if (x1) {
+		struct xfrm_state_pcpu *xpcpu;
+
+		if ((x1->props.extra_flags & XFRM_SA_PCPU_HEAD) &&
+		    (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
+			xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
+			if (!xpcpu->x)
+				xpcpu->x = x;
+		}
+
 		to_put = x1;
 		x1 = NULL;
 		err = -EEXIST;
@@ -1526,6 +1573,17 @@ int xfrm_state_update(struct xfrm_state *x)
 	err = -ESRCH;
 	if (!x1)
 		goto out;
+
+	if ((x1->props.extra_flags & XFRM_SA_PCPU_HEAD) &&
+	    (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
+		struct xfrm_state_pcpu *xpcpu;
+
+		xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
+		if (xpcpu->x)
+			to_put = xpcpu->x;
+		xpcpu->x = x;
+		goto out;
+	}
 
 	if (xfrm_state_kern(x1)) {
 		to_put = x1;
@@ -2323,6 +2381,12 @@ int __xfrm_init_state(struct xfrm_state *x, bool init_replay, bool offload)
 			goto error;
 	}
 
+	if (x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
+		x->xfrmpcpu = alloc_percpu(struct xfrm_state_pcpu);
+		printk("alloc pcpu\n");
+		if (!x->xfrmpcpu)
+			err = -ENOMEM;
+	}
 error:
 	return err;
 }

@@ -132,6 +132,10 @@ struct xfrm_state_offload {
 	u8			flags;
 };
 
+struct xfrm_state_pcpu {
+	struct xfrm_state *x;
+};
+
 /* Full description of state of transformer. */
 struct xfrm_state {
 	possible_net_t		xs_net;
@@ -188,6 +192,9 @@ struct xfrm_state {
 
 	/* IPComp needs an IPIP tunnel for handling uncompressed packets */
 	struct xfrm_state	*tunnel;
+
+	u32 			pcpu_num;
+	struct xfrm_state_pcpu	__percpu *xfrmpcpu;
 
 	/* If a tunnel, number of users + 1 */
 	atomic_t		tunnel_users;
