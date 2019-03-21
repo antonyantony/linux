@@ -1344,6 +1344,10 @@ int xfrm_state_add(struct xfrm_state *x)
 			xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
 			if (!xpcpu->x)
 				xpcpu->x = x;
+			xfrm_state_put(x1);
+			spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+
+			return 0;
 		}
 
 		to_put = x1;

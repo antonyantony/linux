@@ -963,7 +963,7 @@ out:
 	return ret;
 }
 
-static int dump_one_state(struct xfrm_state *x, int count, void *ptr)
+static int __dump_one_state(struct xfrm_state *x, int count, void *ptr)
 {
 	struct xfrm_dump_info *sp = ptr;
 	struct sk_buff *in_skb = sp->in_skb;
@@ -985,6 +985,29 @@ static int dump_one_state(struct xfrm_state *x, int count, void *ptr)
 		return err;
 	}
 	nlmsg_end(skb, nlh);
+	return 0;
+}
+
+static int dump_one_state(struct xfrm_state *x, int count, void *ptr)
+{
+	int err = __dump_one_state(x, count, ptr);
+	if (err)
+		return err;
+
+	if (x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
+		struct xfrm_state_pcpu *xpcpu;
+		int cpu;
+
+		for_each_cpu(cpu, cpu_possible_mask) {
+			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
+			if (xpcpu->x) {
+				err = __dump_one_state(xpcpu->x, count, ptr);
+				if (err)
+					return err;
+			}
+		}
+	}
+
 	return 0;
 }
 
