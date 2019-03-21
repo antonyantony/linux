@@ -143,6 +143,10 @@ enum {
 	XFRM_MODE_FLAG_TUNNEL = 1,
 };
 
+struct xfrm_state_pcpu {
+	struct xfrm_state *x;
+};
+
 /* Full description of state of transformer. */
 struct xfrm_state {
 	possible_net_t		xs_net;
@@ -199,6 +203,9 @@ struct xfrm_state {
 
 	/* IPComp needs an IPIP tunnel for handling uncompressed packets */
 	struct xfrm_state	*tunnel;
+
+	u32			pcpu_num;
+	struct xfrm_state_pcpu	__percpu *xfrmpcpu;
 
 	/* If a tunnel, number of users + 1 */
 	atomic_t		tunnel_users;
@@ -1500,6 +1507,12 @@ struct xfrm_state *xfrm_state_lookup_byaddr(struct net *net, u32 mark,
 					    const xfrm_address_t *saddr,
 					    u8 proto,
 					    unsigned short family);
+struct xfrm_state *xfrm_state_lookup_pcpu(struct net *net, u32 mark,
+					  __be32 spi,
+					  const xfrm_address_t *daddr,
+					  const xfrm_address_t *saddr,
+					  u8 proto,
+					  unsigned short family, u32 pcpu_num);
 #ifdef CONFIG_XFRM_SUB_POLICY
 void xfrm_tmpl_sort(struct xfrm_tmpl **dst, struct xfrm_tmpl **src, int n,
 		    unsigned short family);

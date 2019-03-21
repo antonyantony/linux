@@ -623,6 +623,12 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 	if (attrs[XFRMA_IF_ID])
 		x->if_id = nla_get_u32(attrs[XFRMA_IF_ID]);
 
+	if (attrs[XFRMA_SA_PCPU]) {
+		x->pcpu_num = nla_get_u32(attrs[XFRMA_SA_PCPU]);
+		if (x->pcpu_num > num_possible_cpus())
+			goto error;
+	}
+
 	err = __xfrm_init_state(x, false, attrs[XFRMA_OFFLOAD_DEV]);
 	if (err)
 		goto error;
@@ -719,10 +725,18 @@ static struct xfrm_state *xfrm_user_state_lookup(struct net *net,
 {
 	struct xfrm_state *x = NULL;
 	struct xfrm_mark m;
-	int err;
+	int err = -ESRCH;
+	u32 extra_flags = 0;
+	u32 pcpu_num = -1;
 	u32 mark = xfrm_mark_get(attrs, &m);
 
-	if (xfrm_id_proto_match(p->proto, IPSEC_PROTO_ANY)) {
+	if (attrs[XFRMA_SA_EXTRA_FLAGS])
+		extra_flags = nla_get_u32(attrs[XFRMA_SA_EXTRA_FLAGS]);
+	if (attrs[XFRMA_SA_PCPU])
+		pcpu_num = nla_get_u32(attrs[XFRMA_SA_PCPU]);
+
+	if (xfrm_id_proto_match(p->proto, IPSEC_PROTO_ANY) &&
+	    !(extra_flags & XFRM_SA_PCPU_SUB)) {
 		err = -ESRCH;
 		x = xfrm_state_lookup(net, mark, &p->daddr, p->spi, p->proto, p->family);
 	} else {
@@ -735,9 +749,17 @@ static struct xfrm_state *xfrm_user_state_lookup(struct net *net,
 		}
 
 		err = -ESRCH;
-		x = xfrm_state_lookup_byaddr(net, mark,
-					     &p->daddr, saddr,
-					     p->proto, p->family);
+
+		if (extra_flags & XFRM_SA_PCPU_SUB) {
+			x = xfrm_state_lookup_pcpu(net, mark, p->spi,
+						   &p->daddr, saddr,
+						   p->proto, p->family,
+						   pcpu_num);
+		} else {
+			x = xfrm_state_lookup_byaddr(net, mark,
+						     &p->daddr, saddr,
+						     p->proto, p->family);
+		}
 	}
 
  out:
@@ -963,13 +985,20 @@ static int copy_to_user_state_extra(struct xfrm_state *x,
 		if (ret)
 			goto out;
 	}
+
+	if (x->pcpu_num) {
+		ret = nla_put_u32(skb, XFRMA_SA_PCPU, x->pcpu_num);
+		if (ret)
+			goto out;
+	}
+
 	if (x->security)
 		ret = copy_sec_ctx(x->security, skb);
 out:
 	return ret;
 }
 
-static int dump_one_state(struct xfrm_state *x, int count, void *ptr)
+static int __dump_one_state(struct xfrm_state *x, int count, void *ptr)
 {
 	struct xfrm_dump_info *sp = ptr;
 	struct sk_buff *in_skb = sp->in_skb;
@@ -991,6 +1020,30 @@ static int dump_one_state(struct xfrm_state *x, int count, void *ptr)
 		return err;
 	}
 	nlmsg_end(skb, nlh);
+	return 0;
+}
+
+static int dump_one_state(struct xfrm_state *x, int count, void *ptr)
+{
+	int err = __dump_one_state(x, count, ptr);
+
+	if (err)
+		return err;
+
+	if (x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
+		struct xfrm_state_pcpu *xpcpu;
+		int cpu;
+
+		for_each_cpu(cpu, cpu_possible_mask) {
+			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
+			if (xpcpu->x) {
+				err = __dump_one_state(xpcpu->x, count, ptr);
+				if (err)
+					return err;
+			}
+		}
+	}
+
 	return 0;
 }
 
@@ -2582,6 +2635,7 @@ static const struct nla_policy xfrma_policy[XFRMA_MAX+1] = {
 	[XFRMA_SET_MARK]	= { .type = NLA_U32 },
 	[XFRMA_SET_MARK_MASK]	= { .type = NLA_U32 },
 	[XFRMA_IF_ID]		= { .type = NLA_U32 },
+	[XFRMA_SA_PCPU]		= { .type = NLA_U32 },
 };
 
 static const struct nla_policy xfrma_spd_policy[XFRMA_SPD_MAX+1] = {
@@ -2815,6 +2869,8 @@ static inline unsigned int xfrm_sa_len(struct xfrm_state *x)
 	}
 	if (x->if_id)
 		l += nla_total_size(sizeof(x->if_id));
+	if (x->pcpu_num)
+		l += nla_total_size(sizeof(x->pcpu_num));
 
 	/* Must count x->lastused as it may become non-zero behind our back. */
 	l += nla_total_size_64bit(sizeof(u64));
