@@ -1341,6 +1341,7 @@ int xfrm_state_add(struct xfrm_state *x)
 
 		if ((x1->props.extra_flags & XFRM_SA_PCPU_HEAD) &&
 		    (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
+			printk("AA_2019 adding XFRM_SA_PCPU_SUB %u", x->pcpu_num );
 			xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
 			if (!xpcpu->x)
 				xpcpu->x = x;
@@ -1582,6 +1583,7 @@ int xfrm_state_update(struct xfrm_state *x)
 	    (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
 		struct xfrm_state_pcpu *xpcpu;
 
+		printk("AA_2019 adding XFRM_SA_PCPU_SUB %u", x->pcpu_num );
 		xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
 		if (xpcpu->x)
 			to_put = xpcpu->x;
@@ -2387,7 +2389,7 @@ int __xfrm_init_state(struct xfrm_state *x, bool init_replay, bool offload)
 
 	if (x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
 		x->xfrmpcpu = alloc_percpu(struct xfrm_state_pcpu);
-		printk("alloc pcpu\n");
+		printk("AA_2019 alloc pcpu\n");
 		if (!x->xfrmpcpu)
 			err = -ENOMEM;
 	}
