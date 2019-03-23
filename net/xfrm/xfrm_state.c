@@ -1335,17 +1335,12 @@ int xfrm_state_add(struct xfrm_state *x)
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 
-	printk("AA_2019 XFRM_SA_PCPU_HEAD %u XFRM_SA_PCPU_SUB %u",
-			(x->props.extra_flags & XFRM_SA_PCPU_HEAD),
-			(x->props.extra_flags & XFRM_SA_PCPU_SUB));
-
 	x1 = __xfrm_state_locate(x, use_spi, family);
 	if (x1) {
 		struct xfrm_state_pcpu *xpcpu;
 
 		if ((x1->props.extra_flags & XFRM_SA_PCPU_HEAD) &&
 		    (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
-			printk("AA_2019 adding XFRM_SA_PCPU_SUB %u", x->pcpu_num );
 			xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
 			if (!xpcpu->x)
 				xpcpu->x = x;
@@ -1359,8 +1354,6 @@ int xfrm_state_add(struct xfrm_state *x)
 		x1 = NULL;
 		err = -EEXIST;
 		goto out;
-	} else {
-		printk("AA_2019 xfrm_state_add could not find x1 with HEAD SA XFRM_SA_PCPU_SUB");
 	}
 
 	if (use_spi && x->km.seq) {
@@ -1582,21 +1575,13 @@ int xfrm_state_update(struct xfrm_state *x)
 	x1 = __xfrm_state_locate(x, use_spi, x->props.family);
 
 	err = -ESRCH;
-
-	printk("AA_2019 xfrm_state_update XFRM_SA_PCPU_HEAD %u XFRM_SA_PCPU_SUB %u",
-			(x->props.extra_flags & XFRM_SA_PCPU_HEAD),
-			(x->props.extra_flags & XFRM_SA_PCPU_SUB));
-
-	if (!x1) {
-		printk("AA_2019  xfrm_state_update NO X1");
+	if (!x1)
 		goto out;
-	}
 
 	if ((x1->props.extra_flags & XFRM_SA_PCPU_HEAD) &&
-	   (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
+	    (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
 		struct xfrm_state_pcpu *xpcpu;
 
-		printk("AA_2019 adding XFRM_SA_PCPU_SUB %u", x->pcpu_num );
 		xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
 		if (xpcpu->x)
 			to_put = xpcpu->x;
@@ -2402,7 +2387,7 @@ int __xfrm_init_state(struct xfrm_state *x, bool init_replay, bool offload)
 
 	if (x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
 		x->xfrmpcpu = alloc_percpu(struct xfrm_state_pcpu);
-		printk("AA_2019 __xfrm_init_state alloc pcpu\n");
+		printk("alloc pcpu\n");
 		if (!x->xfrmpcpu)
 			err = -ENOMEM;
 	}
