@@ -441,7 +441,7 @@ static void ___xfrm_state_destroy(struct xfrm_state *x)
 		for_each_cpu(cpu, cpu_possible_mask) {
 			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
 			if (xpcpu->x)
-				___xfrm_state_destroy(xpcpu->x);
+				xfrm_state_gc_destroy(xpcpu->x);
 		}
 	}
 
@@ -455,7 +455,6 @@ static void ___xfrm_state_destroy(struct xfrm_state *x)
 	kfree(x->coaddr);
 	kfree(x->replay_esn);
 	kfree(x->preplay_esn);
-	free_percpu(x->xfrmpcpu);
 	if (x->inner_mode)
 		xfrm_put_mode(x->inner_mode);
 	if (x->inner_mode_iaf)
@@ -468,6 +467,7 @@ static void ___xfrm_state_destroy(struct xfrm_state *x)
 		x->type->destructor(x);
 		xfrm_put_type(x->type);
 	}
+	free_percpu(x->xfrmpcpu);
 	xfrm_dev_state_free(x);
 	security_xfrm_state_free(x);
 	xfrm_state_free(x);
@@ -636,12 +636,15 @@ int __xfrm_state_delete(struct xfrm_state *x)
 		struct xfrm_state *xc;
 		int cpu;
 
+		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 		for_each_cpu(cpu, cpu_possible_mask) {
+			printk(KERN_ALERT "DEBUG: Passed %s %d cpu: %d \n",__FUNCTION__,__LINE__, cpu);
 			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
 			xc = xpcpu->x;
 			if (xc && xc->km.state != XFRM_STATE_DEAD) {
 				xc->km.state = XFRM_STATE_DEAD;
-				xfrm_state_put(xc);
+				printk(KERN_ALERT "DEBUG: Passed %s %d Subref: %d \n",__FUNCTION__,__LINE__, refcount_read(&xc->refcnt));
+				// Do not call destroy here; else we have a GC race
 			}
 		}
 	}
@@ -663,6 +666,7 @@ int __xfrm_state_delete(struct xfrm_state *x)
 		 * The xfrm_state_alloc call gives a reference, and that
 		 * is what we are dropping here.
 		 */
+ 		printk(KERN_ALERT "DEBUG: Passed %s %d Headref: %d \n",__FUNCTION__,__LINE__, refcount_read(&x->refcnt));
 		xfrm_state_put(x);
 		err = 0;
 	}
@@ -912,14 +916,15 @@ __xfrm_state_locate(struct xfrm_state *x, int use_spi, int family)
 	struct net *net = xs_net(x);
 	u32 mark = x->mark.v & x->mark.m;
 
-	if (use_spi)
+	if (use_spi){
 		return __xfrm_state_lookup(net, mark, &x->id.daddr,
 					   x->id.spi, x->id.proto, family);
-	else
+	} else {
 		return __xfrm_state_lookup_byaddr(net, mark,
 						  &x->id.daddr,
 						  &x->props.saddr,
 						  x->id.proto, family);
+	}
 }
 
 static void xfrm_hash_grow_check(struct net *net, int have_hash_collision)
@@ -1025,6 +1030,7 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 found:
 	x = best;
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d flags: %x\n",__FUNCTION__,__LINE__, x->props.extra_flags);
 	if (x && x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
 		struct xfrm_state_pcpu *xpcpu;
 
@@ -1335,10 +1341,14 @@ int xfrm_state_add(struct xfrm_state *x)
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 
-	x1 = __xfrm_state_locate(x, use_spi, family);
+    // TODO: CHANGE 0 back to use_spi - we must never use this to lookup a main-SA
+	x1 = __xfrm_state_locate(x, 0, family);
+	printk(KERN_ALERT "DEBUG: Passed %s %d %p %d\n",__FUNCTION__,__LINE__, x1, use_spi);
 	if (x1) {
 		struct xfrm_state_pcpu *xpcpu;
-
+		// TODO: If no head found, throw an error
+		printk(KERN_ALERT "DEBUG: Passed %s %d x1: %x\n",__FUNCTION__,__LINE__, x1->props.extra_flags);
+		printk(KERN_ALERT "DEBUG: Passed %s %d x: %x\n",__FUNCTION__,__LINE__, x->props.extra_flags);
 		if ((x1->props.extra_flags & XFRM_SA_PCPU_HEAD) &&
 		    (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
 			xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
@@ -1346,6 +1356,8 @@ int xfrm_state_add(struct xfrm_state *x)
 				xpcpu->x = x;
 			xfrm_state_put(x1);
 			spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+			printk(KERN_ALERT "DEBUG: Passed %s %d sub-SA linked against main SA!\n",__FUNCTION__,__LINE__);
+
 
 			return 0;
 		}
@@ -1353,6 +1365,9 @@ int xfrm_state_add(struct xfrm_state *x)
 		to_put = x1;
 		x1 = NULL;
 		err = -EEXIST;
+		goto out;
+	} else if (x->props.extra_flags & XFRM_SA_PCPU_SUB) {
+		err = -ESRCH;
 		goto out;
 	}
 

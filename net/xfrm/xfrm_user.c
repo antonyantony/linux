@@ -559,8 +559,10 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 
 	copy_from_user_state(x, p);
 
-	if (attrs[XFRMA_SA_EXTRA_FLAGS])
+	if (attrs[XFRMA_SA_EXTRA_FLAGS]){
 		x->props.extra_flags = nla_get_u32(attrs[XFRMA_SA_EXTRA_FLAGS]);
+		printk(KERN_ALERT "DEBUG: Passed %s %d construct_extra_flags: %d \n",__FUNCTION__,__LINE__,x->props.extra_flags);
+	}
 
 	if ((err = attach_aead(x, attrs[XFRMA_ALG_AEAD])))
 		goto error;
@@ -605,6 +607,7 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 
 	if (attrs[XFRMA_SA_PCPU]) {
 		x->pcpu_num = nla_get_u32(attrs[XFRMA_SA_PCPU]);
+		printk(KERN_ALERT "DEBUG: Passed %s %d construct_sa_pcpu: %d \n",__FUNCTION__,__LINE__,x->pcpu_num);
 		if (x->pcpu_num > num_possible_cpus())
 			goto error;
 	}
