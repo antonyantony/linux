@@ -637,6 +637,8 @@ int __xfrm_state_delete(struct xfrm_state *x)
 		int cpu;
 
 		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
+		dump_stack();
+
 		for_each_cpu(cpu, cpu_possible_mask) {
 			printk(KERN_ALERT "DEBUG: Passed %s %d cpu: %d \n",__FUNCTION__,__LINE__, cpu);
 			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
@@ -1047,6 +1049,7 @@ found:
 					      tmpl->id.proto, encap_family)) != NULL) {
 			to_put = x0;
 			error = -EEXIST;
+			printk(KERN_ALERT "DEBUG: Passed %s %d return EEXIST\n",__FUNCTION__,__LINE__);
 			goto out;
 		}
 
@@ -1365,8 +1368,10 @@ int xfrm_state_add(struct xfrm_state *x)
 		to_put = x1;
 		x1 = NULL;
 		err = -EEXIST;
+		printk(KERN_ALERT "DEBUG: Passed %s %d return EEXIST\n",__FUNCTION__,__LINE__);
 		goto out;
 	} else if (x->props.extra_flags & XFRM_SA_PCPU_SUB) {
+		printk(KERN_ALERT "DEBUG: Passed %s %d return -ESRCH\n",__FUNCTION__,__LINE__);
 		err = -ESRCH;
 		goto out;
 	}
@@ -1607,6 +1612,7 @@ int xfrm_state_update(struct xfrm_state *x)
 	if (xfrm_state_kern(x1)) {
 		to_put = x1;
 		err = -EEXIST;
+		printk(KERN_ALERT "DEBUG: Passed %s %d return EEXIST\n",__FUNCTION__,__LINE__);
 		goto out;
 	}
 
