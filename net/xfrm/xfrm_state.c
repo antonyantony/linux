@@ -1605,8 +1605,10 @@ int xfrm_state_update(struct xfrm_state *x)
 
 		xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
 		if (xpcpu->x) {
+			xpcpu->x->km.state = XFRM_STATE_DEAD;
 			to_put = xpcpu->x;
 			xpcpu->x = x;
+			err = 0;
 			goto out;
 		}
 		xpcpu->x = x;

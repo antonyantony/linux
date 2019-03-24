@@ -557,6 +557,7 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 	if (!x)
 		goto error_no_put;
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d x %px \n",__FUNCTION__,__LINE__,x);
 	copy_from_user_state(x, p);
 
 	if (attrs[XFRMA_SA_EXTRA_FLAGS]){
