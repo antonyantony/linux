@@ -631,13 +631,15 @@ int __xfrm_state_delete(struct xfrm_state *x)
 	struct net *net = xs_net(x);
 	int err = -ESRCH;
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d %px\n",__FUNCTION__,__LINE__, x);
+	WARN_ON(1);
 	if (x->xfrmpcpu) {
 		struct xfrm_state_pcpu *xpcpu;
 		struct xfrm_state *xc;
 		int cpu;
 
 		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
-		dump_stack();
+		//dump_stack();
 
 		for_each_cpu(cpu, cpu_possible_mask) {
 			printk(KERN_ALERT "DEBUG: Passed %s %d cpu: %d \n",__FUNCTION__,__LINE__, cpu);
@@ -1032,8 +1034,7 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 found:
 	x = best;
 
-	printk(KERN_ALERT "DEBUG: Passed %s %d flags: %x\n",__FUNCTION__,__LINE__, x->props.extra_flags);
-	if (x && x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
+	if (!error && x && x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
 		struct xfrm_state_pcpu *xpcpu;
 
 		xpcpu = per_cpu_ptr(x->xfrmpcpu, get_cpu());
@@ -1346,7 +1347,7 @@ int xfrm_state_add(struct xfrm_state *x)
 
     // TODO: CHANGE 0 back to use_spi - we must never use this to lookup a main-SA
 	x1 = __xfrm_state_locate(x, 0, family);
-	printk(KERN_ALERT "DEBUG: Passed %s %d %p %d\n",__FUNCTION__,__LINE__, x1, use_spi);
+	printk(KERN_ALERT "DEBUG: Passed %s %d %px %px %d\n",__FUNCTION__,__LINE__, x1, x, use_spi);
 	if (x1) {
 		struct xfrm_state_pcpu *xpcpu;
 		// TODO: If no head found, throw an error
@@ -1603,10 +1604,14 @@ int xfrm_state_update(struct xfrm_state *x)
 		struct xfrm_state_pcpu *xpcpu;
 
 		xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
-		if (xpcpu->x)
+		if (xpcpu->x) {
 			to_put = xpcpu->x;
+			xpcpu->x = x;
+			goto out;
+		}
 		xpcpu->x = x;
-		goto out;
+		spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+		return 0;
 	}
 
 	if (xfrm_state_kern(x1)) {
