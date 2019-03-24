@@ -1605,15 +1605,16 @@ int xfrm_state_update(struct xfrm_state *x)
 
 		xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
 		if (xpcpu->x) {
-			xpcpu->x->km.state = XFRM_STATE_DEAD;
-			to_put = xpcpu->x;
-			xpcpu->x = x;
+			xfrm_state_put(x1);
+			xfrm_state_hold(xpcpu->x);
+			x1 = xpcpu->x;
+
 			err = 0;
 			goto out;
 		}
-		xpcpu->x = x;
+		xfrm_state_put(x1);
 		spin_unlock_bh(&net->xfrm.xfrm_state_lock);
-		return 0;
+		return -ESRCH;
 	}
 
 	if (xfrm_state_kern(x1)) {
