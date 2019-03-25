@@ -712,8 +712,13 @@ static struct xfrm_state *xfrm_user_state_lookup(struct net *net,
 	struct xfrm_mark m;
 	int err;
 	u32 mark = xfrm_mark_get(attrs, &m);
+	u32 extra_flags = 0;
 
-	if (xfrm_id_proto_match(p->proto, IPSEC_PROTO_ANY)) {
+	if (attrs[XFRMA_SA_EXTRA_FLAGS])
+		extra_flags = nla_get_u32(attrs[XFRMA_SA_EXTRA_FLAGS]);
+
+	if (xfrm_id_proto_match(p->proto, IPSEC_PROTO_ANY) &&
+		!(extra_flags & XFRM_SA_PCPU_SUB)) {
 		err = -ESRCH;
 		x = xfrm_state_lookup(net, mark, &p->daddr, p->spi, p->proto, p->family);
 	} else {
