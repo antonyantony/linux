@@ -557,7 +557,6 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 	if (!x)
 		goto error_no_put;
 
-	printk(KERN_ALERT "DEBUG: Passed %s %d x %px \n",__FUNCTION__,__LINE__,x);
 	copy_from_user_state(x, p);
 
 	if (attrs[XFRMA_SA_EXTRA_FLAGS]){
@@ -710,30 +709,50 @@ static struct xfrm_state *xfrm_user_state_lookup(struct net *net,
 {
 	struct xfrm_state *x = NULL;
 	struct xfrm_mark m;
-	int err;
-	u32 mark = xfrm_mark_get(attrs, &m);
+	int err = -ESRCH;
 	u32 extra_flags = 0;
+	u32 pcpu_num = -1;
+	u32 mark = xfrm_mark_get(attrs, &m);
 
 	if (attrs[XFRMA_SA_EXTRA_FLAGS])
 		extra_flags = nla_get_u32(attrs[XFRMA_SA_EXTRA_FLAGS]);
+	if (attrs[XFRMA_SA_PCPU])
+		pcpu_num = nla_get_u32(attrs[XFRMA_SA_PCPU]);
+		
+	printk(KERN_ALERT "DEBUG: Passed %s %d %d %x\n",__FUNCTION__,__LINE__, p->proto, extra_flags);
 
 	if (xfrm_id_proto_match(p->proto, IPSEC_PROTO_ANY) &&
-		!(extra_flags & XFRM_SA_PCPU_SUB)) {
+			!(extra_flags & XFRM_SA_PCPU_SUB)) {
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		err = -ESRCH;
 		x = xfrm_state_lookup(net, mark, &p->daddr, p->spi, p->proto, p->family);
+		printk(KERN_ALERT "DEBUG: Passed %s %d %px \n",__FUNCTION__,__LINE__, x);
 	} else {
 		xfrm_address_t *saddr = NULL;
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 
 		verify_one_addr(attrs, XFRMA_SRCADDR, &saddr);
 		if (!saddr) {
+			printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 			err = -EINVAL;
 			goto out;
 		}
 
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		err = -ESRCH;
-		x = xfrm_state_lookup_byaddr(net, mark,
-					     &p->daddr, saddr,
-					     p->proto, p->family);
+		
+		if (extra_flags & XFRM_SA_PCPU_SUB) {
+			printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+			x = xfrm_state_lookup_pcpu(net, mark, p->spi,
+						     &p->daddr, saddr,
+						     p->proto, p->family, pcpu_num);
+		} else {
+			printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+			x = xfrm_state_lookup_byaddr(net, mark,
+						     &p->daddr, saddr,
+						     p->proto, p->family);
+		}
+		printk(KERN_ALERT "DEBUG: Passed %s %d %px\n",__FUNCTION__,__LINE__, x);
 	}
 
  out:

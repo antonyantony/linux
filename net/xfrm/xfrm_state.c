@@ -631,16 +631,12 @@ int __xfrm_state_delete(struct xfrm_state *x)
 	struct net *net = xs_net(x);
 	int err = -ESRCH;
 
-	printk(KERN_ALERT "DEBUG: Passed %s %d %px\n",__FUNCTION__,__LINE__, x);
-	// WARN_ON(1); // still an issue check further
 	if (x->xfrmpcpu) {
 		struct xfrm_state_pcpu *xpcpu;
 		struct xfrm_state *xc;
 		int cpu;
 
 		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
-		//dump_stack();
-
 		for_each_cpu(cpu, cpu_possible_mask) {
 			printk(KERN_ALERT "DEBUG: Passed %s %d cpu: %d \n",__FUNCTION__,__LINE__, cpu);
 			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
@@ -872,15 +868,30 @@ static struct xfrm_state *__xfrm_state_lookup(struct net *net, u32 mark,
 	unsigned int h = xfrm_spi_hash(net, daddr, spi, proto, family);
 	struct xfrm_state *x;
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+
 	hlist_for_each_entry_rcu(x, net->xfrm.state_byspi + h, byspi) {
+		printk(KERN_ALERT "DEBUG: Passed %s %d %d ?= %d\n",__FUNCTION__,__LINE__,
+				x->props.family, family);
+		printk(KERN_ALERT "DEBUG: Passed %s %d %d ?= %d\n",__FUNCTION__,__LINE__,
+				x->id.spi, spi);
+		printk(KERN_ALERT "DEBUG: Passed %s %d %d ?= %d\n",__FUNCTION__,__LINE__,
+				x->id.proto, proto);
+		printk(KERN_ALERT "DEBUG: Passed %s %d addrequal? %d\n",__FUNCTION__,__LINE__,
+				xfrm_addr_equal(&x->id.daddr, daddr, family));
+
+		
 		if (x->props.family != family ||
 		    x->id.spi       != spi ||
 		    x->id.proto     != proto ||
 		    !xfrm_addr_equal(&x->id.daddr, daddr, family))
 			continue;
 
-		if ((mark & x->mark.m) != x->mark.v)
+		if ((mark & x->mark.m) != x->mark.v){
+			printk(KERN_ALERT "DEBUG: Passed %s %d %d\n",__FUNCTION__,__LINE__, x->mark.v);
+			printk(KERN_ALERT "DEBUG: Passed %s %d %d\n",__FUNCTION__,__LINE__, x->mark.m);
 			continue;
+		}
 		if (!xfrm_state_hold_rcu(x))
 			continue;
 		return x;
@@ -1050,7 +1061,6 @@ found:
 					      tmpl->id.proto, encap_family)) != NULL) {
 			to_put = x0;
 			error = -EEXIST;
-			printk(KERN_ALERT "DEBUG: Passed %s %d return EEXIST\n",__FUNCTION__,__LINE__);
 			goto out;
 		}
 
@@ -1345,10 +1355,9 @@ int xfrm_state_add(struct xfrm_state *x)
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 
-	if (x->props.extra_flags & XFRM_SA_PCPU_SUB)
+	if(x->props.extra_flags & XFRM_SA_PCPU_SUB)
 		use_spi = 0;
-
-	x1 = __xfrm_state_locate(x, 0, family);
+	x1 = __xfrm_state_locate(x, use_spi, family);
 	printk(KERN_ALERT "DEBUG: Passed %s %d %px %px %d\n",__FUNCTION__,__LINE__, x1, x, use_spi);
 	if (x1) {
 		struct xfrm_state_pcpu *xpcpu;
@@ -1371,10 +1380,8 @@ int xfrm_state_add(struct xfrm_state *x)
 		to_put = x1;
 		x1 = NULL;
 		err = -EEXIST;
-		printk(KERN_ALERT "DEBUG: Passed %s %d return EEXIST\n",__FUNCTION__,__LINE__);
 		goto out;
 	} else if (x->props.extra_flags & XFRM_SA_PCPU_SUB) {
-		printk(KERN_ALERT "DEBUG: Passed %s %d return -ESRCH\n",__FUNCTION__,__LINE__);
 		err = -ESRCH;
 		goto out;
 	}
@@ -1596,40 +1603,52 @@ int xfrm_state_update(struct xfrm_state *x)
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 
-	if (x->props.extra_flags & XFRM_SA_PCPU_SUB)
+	if(x->props.extra_flags & XFRM_SA_PCPU_SUB)
 		use_spi = 0;
 	x1 = __xfrm_state_locate(x, use_spi, x->props.family);
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d %px %px %d\n",__FUNCTION__,__LINE__, x1, x, use_spi);
 	err = -ESRCH;
-	if (!x1)
+	if (!x1){
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		goto out;
+	}
+	printk(KERN_ALERT "DEBUG: Passed %s %d x1: %d, x: %d\n",__FUNCTION__,__LINE__, x1->props.extra_flags, x->props.extra_flags);
 
 	if ((x1->props.extra_flags & XFRM_SA_PCPU_HEAD) &&
 	    (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
 		struct xfrm_state_pcpu *xpcpu;
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 
 		xpcpu = per_cpu_ptr(x1->xfrmpcpu, x->pcpu_num);
-		if (xpcpu->x) {
+		if (xpcpu->x){
+			printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+			// Found the actual SA state. Drop ref to x1, and reset to percpu SA
 			xfrm_state_put(x1);
+			
+			// Make sure to take a ref first; subsequent code expects this to be held
 			xfrm_state_hold(xpcpu->x);
 			x1 = xpcpu->x;
-
+			
+			// Bypass IPCOMP, STATE_ACQ checks - they don't apply to percpu SAs
 			err = 0;
 			goto out;
 		}
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		xfrm_state_put(x1);
 		spin_unlock_bh(&net->xfrm.xfrm_state_lock);
 		return -ESRCH;
 	}
 
 	if (xfrm_state_kern(x1)) {
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		to_put = x1;
 		err = -EEXIST;
-		printk(KERN_ALERT "DEBUG: Passed %s %d return EEXIST\n",__FUNCTION__,__LINE__);
 		goto out;
 	}
 
 	if (x1->km.state == XFRM_STATE_ACQ) {
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		__xfrm_state_insert(x);
 		x = NULL;
 	}
@@ -1638,13 +1657,18 @@ int xfrm_state_update(struct xfrm_state *x)
 out:
 	spin_unlock_bh(&net->xfrm.xfrm_state_lock);
 
-	if (to_put)
+	if (to_put){
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		xfrm_state_put(to_put);
+	}
 
-	if (err)
+	if (err){
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		return err;
+	}
 
 	if (!x) {
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		xfrm_state_delete(x1);
 		xfrm_state_put(x1);
 		return 0;
@@ -1653,12 +1677,14 @@ out:
 	err = -EINVAL;
 	spin_lock_bh(&x1->lock);
 	if (likely(x1->km.state == XFRM_STATE_VALID)) {
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		if (x->encap && x1->encap &&
 		    x->encap->encap_type == x1->encap->encap_type)
 			memcpy(x1->encap, x->encap, sizeof(*x1->encap));
 		else if (x->encap || x1->encap)
 			goto fail;
 
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		if (x->coaddr && x1->coaddr) {
 			memcpy(x1->coaddr, x->coaddr, sizeof(*x1->coaddr));
 		}
@@ -1668,10 +1694,13 @@ out:
 		x1->km.dying = 0;
 
 		tasklet_hrtimer_start(&x1->mtimer, ktime_set(1, 0), HRTIMER_MODE_REL);
-		if (x1->curlft.use_time)
+		if (x1->curlft.use_time){
+			printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 			xfrm_state_check_expire(x1);
+		}
 
 		if (x->props.smark.m || x->props.smark.v || x->if_id) {
+			printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 			spin_lock_bh(&net->xfrm.xfrm_state_lock);
 
 			if (x->props.smark.m || x->props.smark.v)
@@ -1686,12 +1715,14 @@ out:
 
 		err = 0;
 		x->km.state = XFRM_STATE_DEAD;
+		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		__xfrm_state_put(x);
 	}
 
 fail:
 	spin_unlock_bh(&x1->lock);
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 	xfrm_state_put(x1);
 
 	return err;
@@ -1746,6 +1777,42 @@ xfrm_state_lookup_byaddr(struct net *net, u32 mark,
 	return x;
 }
 EXPORT_SYMBOL(xfrm_state_lookup_byaddr);
+
+struct xfrm_state *
+xfrm_state_lookup_pcpu(struct net *net, u32 mark, __be32 spi,
+			 const xfrm_address_t *daddr, const xfrm_address_t *saddr,
+			 u8 proto, unsigned short family, u32 pcpu_num)
+{
+	struct xfrm_state *x;
+	struct xfrm_state_pcpu *xpcpu;
+
+	spin_lock_bh(&net->xfrm.xfrm_state_lock);
+
+	x = __xfrm_state_lookup_byaddr(net, mark, daddr, saddr, proto, family);
+	if (!x)
+		goto out;
+	printk(KERN_ALERT "DEBUG: Passed %s %d pcpu_num: %d \n",__FUNCTION__,__LINE__, pcpu_num);
+	
+	xpcpu = per_cpu_ptr(x->xfrmpcpu, pcpu_num);
+	if (!xpcpu)
+		goto out;
+	printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+	
+	xfrm_state_put(x);
+	x = NULL;
+	if (xpcpu->x){ 
+		printk(KERN_ALERT "DEBUG: Passed %s %d %x ?= %x\n",__FUNCTION__,__LINE__, xpcpu->x->id.spi, spi);
+		if (xpcpu->x->id.spi == spi){
+			xfrm_state_hold(xpcpu->x);
+			x = xpcpu->x;
+		}
+	}
+
+out:
+	spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+	return x;
+}
+EXPORT_SYMBOL(xfrm_state_lookup_pcpu);
 
 struct xfrm_state *
 xfrm_find_acq(struct net *net, const struct xfrm_mark *mark, u8 mode, u32 reqid,
