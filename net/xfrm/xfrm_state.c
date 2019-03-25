@@ -1345,7 +1345,9 @@ int xfrm_state_add(struct xfrm_state *x)
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 
-    // TODO: CHANGE 0 back to use_spi - we must never use this to lookup a main-SA
+	if (x->props.extra_flags & XFRM_SA_PCPU_SUB)
+		use_spi = 0;
+
 	x1 = __xfrm_state_locate(x, 0, family);
 	printk(KERN_ALERT "DEBUG: Passed %s %d %px %px %d\n",__FUNCTION__,__LINE__, x1, x, use_spi);
 	if (x1) {
@@ -1593,6 +1595,9 @@ int xfrm_state_update(struct xfrm_state *x)
 	to_put = NULL;
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
+
+	if (x->props.extra_flags & XFRM_SA_PCPU_SUB)
+		use_spi = 0;
 	x1 = __xfrm_state_locate(x, use_spi, x->props.family);
 
 	err = -ESRCH;
