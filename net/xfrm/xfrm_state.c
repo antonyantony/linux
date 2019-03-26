@@ -873,14 +873,14 @@ static struct xfrm_state *__xfrm_state_lookup(struct net *net, u32 mark,
 	hlist_for_each_entry_rcu(x, net->xfrm.state_byspi + h, byspi) {
 		printk(KERN_ALERT "DEBUG: Passed %s %d %d ?= %d\n",__FUNCTION__,__LINE__,
 				x->props.family, family);
-		printk(KERN_ALERT "DEBUG: Passed %s %d %d ?= %d\n",__FUNCTION__,__LINE__,
+		printk(KERN_ALERT "DEBUG: Passed %s %d spi be 0x%x ?= 0x%x\n",__FUNCTION__,__LINE__,
 				x->id.spi, spi);
 		printk(KERN_ALERT "DEBUG: Passed %s %d %d ?= %d\n",__FUNCTION__,__LINE__,
 				x->id.proto, proto);
 		printk(KERN_ALERT "DEBUG: Passed %s %d addrequal? %d\n",__FUNCTION__,__LINE__,
 				xfrm_addr_equal(&x->id.daddr, daddr, family));
 
-		
+
 		if (x->props.family != family ||
 		    x->id.spi       != spi ||
 		    x->id.proto     != proto ||
