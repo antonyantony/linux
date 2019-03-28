@@ -440,7 +440,7 @@ static void ___xfrm_state_destroy(struct xfrm_state *x)
 
 		for_each_cpu(cpu, cpu_possible_mask) {
 			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
-			if (xpcpu->x && refcount_dec_and_test(&xpcpu->x.refcnt))
+			if (xpcpu->x && refcount_dec_and_test(&xpcpu->x->refcnt))
 				___xfrm_state_destroy(xpcpu->x);
 		}
 	}
