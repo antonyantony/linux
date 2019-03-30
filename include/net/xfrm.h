@@ -1955,6 +1955,8 @@ static inline void xfrm_dev_state_delete(struct xfrm_state *x)
 {
 	struct xfrm_state_offload *xso = &x->xso;
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
+
 	if (xso->dev)
 		xso->dev->xfrmdev_ops->xdo_dev_state_delete(x);
 }
@@ -1992,6 +1994,7 @@ static inline int xfrm_dev_state_add(struct net *net, struct xfrm_state *x, stru
 
 static inline void xfrm_dev_state_delete(struct xfrm_state *x)
 {
+	printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 }
 
 static inline void xfrm_dev_state_free(struct xfrm_state *x)
