@@ -631,6 +631,15 @@ int __xfrm_state_delete(struct xfrm_state *x)
 	struct net *net = xs_net(x);
 	int err = -ESRCH;
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
+	if (x) {
+		printk(KERN_ALERT "DEBUG: Passed %s %d spi 0x%x xfrmpcpu %p \n",__FUNCTION__,__LINE__, x->id.spi, x->xfrmpcpu);
+	} else {
+		printk(KERN_ALERT "DEBUG: Passed %s %d x==NULL\n",__FUNCTION__,__LINE__);
+		WARN_ON(1);
+		return err;
+	}
+
 	if (x->xfrmpcpu) {
 		struct xfrm_state_pcpu *xpcpu;
 		struct xfrm_state *xc;
@@ -649,9 +658,12 @@ int __xfrm_state_delete(struct xfrm_state *x)
 		}
 	}
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d x->km.state %d\n",__FUNCTION__,__LINE__, x->km.state);
 	if (x->km.state != XFRM_STATE_DEAD) {
+		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 		x->km.state = XFRM_STATE_DEAD;
 		spin_lock(&net->xfrm.xfrm_state_lock);
+		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 		list_del(&x->km.all);
 		hlist_del_rcu(&x->bydst);
 		hlist_del_rcu(&x->bysrc);
@@ -659,12 +671,14 @@ int __xfrm_state_delete(struct xfrm_state *x)
 			hlist_del_rcu(&x->byspi);
 		net->xfrm.state_num--;
 		
+		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 		if(x->props.extra_flags & XFRM_SA_PCPU_HEAD){
 			printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 			atomic_dec(&net->xfrm.state_head_cnt);
 		}
 		spin_unlock(&net->xfrm.xfrm_state_lock);
 
+		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 		xfrm_dev_state_delete(x);
 
 		/* All xfrm_state objects are created by xfrm_state_alloc.
@@ -675,6 +689,7 @@ int __xfrm_state_delete(struct xfrm_state *x)
 		xfrm_state_put(x);
 		err = 0;
 	}
+	printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 
 	return err;
 }
@@ -686,6 +701,7 @@ int xfrm_state_delete(struct xfrm_state *x)
 
 	spin_lock_bh(&x->lock);
 	err = __xfrm_state_delete(x);
+	printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 	spin_unlock_bh(&x->lock);
 
 	return err;
