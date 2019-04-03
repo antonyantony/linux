@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 0
 SUBLEVEL = 4
-EXTRAVERSION =
+EXTRAVERSION = stabale-pcpu-allocspi-squash
 NAME = Shy Crocodile
 
 # *DOCUMENTATION*
