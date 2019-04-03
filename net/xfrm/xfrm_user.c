@@ -726,7 +726,12 @@ static struct xfrm_state *xfrm_user_state_lookup(struct net *net,
 		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		err = -ESRCH;
 		x = xfrm_state_lookup(net, mark, &p->daddr, p->spi, p->proto, p->family);
-		printk(KERN_ALERT "DEBUG: Passed %s %d %px \n",__FUNCTION__,__LINE__, x);
+		if (x) {
+			printk(KERN_ALERT "DEBUG: Passed %s %d found x %p x->id.spi 0x%x x->xfrmpcpu %p\n",__FUNCTION__,__LINE__, x, x->id.spi, x->xfrmpcpu);
+
+		} else {
+			printk(KERN_ALERT "DEBUG: Passed %s %d no match for spi 0x%x\n",__FUNCTION__,__LINE__,p->spi);
+		}
 	} else {
 		xfrm_address_t *saddr = NULL;
 		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
@@ -769,10 +774,14 @@ static int xfrm_del_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	int err = -ESRCH;
 	struct km_event c;
 	struct xfrm_usersa_id *p = nlmsg_data(nlh);
+	__be32 debug_spi;
 
 	x = xfrm_user_state_lookup(net, p, attrs, &err);
+	printk(KERN_ALERT "DEBUG: Passed %s %d x %p\n",__FUNCTION__,__LINE__, x);
 	if (x == NULL)
 		return err;
+
+	debug_spi = x->id.spi;
 
 	if ((err = security_xfrm_state_delete(x)) != 0)
 		goto out;
@@ -782,7 +791,9 @@ static int xfrm_del_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 		goto out;
 	}
 
+	 printk(KERN_ALERT "DEBUG: Passed %s %d to delete spi be 0x%x\n",__FUNCTION__,__LINE__, debug_spi);
 	err = xfrm_state_delete(x);
+	printk(KERN_ALERT "DEBUG: Passed %s %d done delete spi be 0x%x\n",__FUNCTION__,__LINE__, debug_spi);
 
 	if (err < 0)
 		goto out;

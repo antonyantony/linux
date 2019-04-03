@@ -434,14 +434,18 @@ EXPORT_SYMBOL(xfrm_state_free);
 
 static void ___xfrm_state_destroy(struct xfrm_state *x)
 {
+	printk(KERN_ALERT "DEBUG: Passed %s %d spi 0x%x x->xfrmpcpu %p\n",__FUNCTION__,__LINE__, x->id.spi, x->xfrmpcpu);
 	if (x->xfrmpcpu) {
 		struct xfrm_state_pcpu *xpcpu;
 		int cpu;
 
 		for_each_cpu(cpu, cpu_possible_mask) {
 			xpcpu = per_cpu_ptr(x->xfrmpcpu, cpu);
-			if (xpcpu->x && refcount_dec_and_test(&xpcpu->x->refcnt))
+			printk(KERN_ALERT "DEBUG: Passed %s %d cpu %d xpcpu %p xpcpu->x %p\n",__FUNCTION__,__LINE__, cpu, xpcpu, xpcpu->x);
+			if (xpcpu->x && refcount_dec_and_test(&xpcpu->x->refcnt)) {
+				printk(KERN_ALERT "DEBUG: Passed %s %d recuressive call cpu %d x->id.spi 0x%x\n",__FUNCTION__,__LINE__, cpu, xpcpu->x->id.spi);
 				___xfrm_state_destroy(xpcpu->x);
+			}
 		}
 	}
 
@@ -633,7 +637,7 @@ int __xfrm_state_delete(struct xfrm_state *x)
 
 	printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 	if (x) {
-		printk(KERN_ALERT "DEBUG: Passed %s %d spi 0x%x xfrmpcpu %p \n",__FUNCTION__,__LINE__, x->id.spi, x->xfrmpcpu);
+		printk(KERN_ALERT "DEBUG: Passed %s %d x %p spi 0x%x xfrmpcpu %p \n",__FUNCTION__,__LINE__, x, x->id.spi, x->xfrmpcpu);
 	} else {
 		printk(KERN_ALERT "DEBUG: Passed %s %d x==NULL\n",__FUNCTION__,__LINE__);
 		WARN_ON(1);
@@ -658,7 +662,7 @@ int __xfrm_state_delete(struct xfrm_state *x)
 		}
 	}
 
-	printk(KERN_ALERT "DEBUG: Passed %s %d x->km.state %d\n",__FUNCTION__,__LINE__, x->km.state);
+	printk(KERN_ALERT "DEBUG: Passed %s %d x %p x->km.state %d props.extra_flags %u\n",__FUNCTION__,__LINE__, x, x->km.state, x->props.extra_flags);
 	if (x->km.state != XFRM_STATE_DEAD) {
 		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 		x->km.state = XFRM_STATE_DEAD;
@@ -699,8 +703,10 @@ int xfrm_state_delete(struct xfrm_state *x)
 {
 	int err;
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d spin_lock_bh locked x %p spi 0x%x", __func__, __LINE__,x, x->id.spi);
 	spin_lock_bh(&x->lock);
 	err = __xfrm_state_delete(x);
+	// printk(KERN_ALERT "DEBUG: Passed %s %d spin_unlock_bh x %p", __func__, __LINE__,x);
 	spin_unlock_bh(&x->lock);
 
 	return err;
@@ -1265,6 +1271,7 @@ static void __xfrm_state_insert(struct xfrm_state *x)
 	struct net *net = xs_net(x);
 	unsigned int h;
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d insert x %p into xfrm.state_all spi 0x%x XFRM_SA_PCPU_HEAD %u XFRM_SA_PCPU_SUB %u\n",__FUNCTION__,__LINE__, x, x->id.spi, x->props.extra_flags & XFRM_SA_PCPU_HEAD, x->props.extra_flags & XFRM_SA_PCPU_SUB);
 	list_add(&x->km.all, &net->xfrm.state_all);
 
 	h = xfrm_dst_hash(net, &x->id.daddr, &x->props.saddr,
@@ -1288,11 +1295,11 @@ static void __xfrm_state_insert(struct xfrm_state *x)
 	net->xfrm.state_num++;
 	
 	if(x->props.extra_flags & XFRM_SA_PCPU_HEAD){
-		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
+		printk(KERN_ALERT "DEBUG: Passed %s %d x %p\n",__FUNCTION__,__LINE__, x);
 		atomic_inc(&net->xfrm.state_head_cnt);
 		printk(KERN_ALERT "DEBUG: Passed %s %d %d\n",__FUNCTION__,__LINE__, atomic_read(&net->xfrm.state_head_cnt));
 	}
-
+	printk(KERN_ALERT "DEBUG: Passed %s %d x %p\n",__FUNCTION__,__LINE__, x);
 	xfrm_hash_grow_check(net, x->bydst.next != NULL);
 }
 
@@ -1441,9 +1448,7 @@ int xfrm_state_add(struct xfrm_state *x)
 				xpcpu->x = x;
 			xfrm_state_put(x1);
 			spin_unlock_bh(&net->xfrm.xfrm_state_lock);
-			printk(KERN_ALERT "DEBUG: Passed %s %d sub-SA linked against main SA!\n",__FUNCTION__,__LINE__);
-
-
+			printk(KERN_ALERT "DEBUG: Passed %s %d sub-SA linked against main SA cpu %u! head spi 0x%x sub spi 0x%x x1p %p xp %p\n",__FUNCTION__,__LINE__, x->pcpu_num, x1->id.spi, x->id.spi, x1, x);
 			return 0;
 		}
 
@@ -1471,6 +1476,7 @@ int xfrm_state_add(struct xfrm_state *x)
 				     &x->id.daddr, &x->props.saddr, 0);
 
 	__xfrm_state_bump_genids(x);
+	printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 	__xfrm_state_insert(x);
 	err = 0;
 
@@ -1671,6 +1677,7 @@ int xfrm_state_update(struct xfrm_state *x)
 
 	to_put = NULL;
 
+	printk(KERN_ALERT "DEBUG: Passed %s %d call spin_lock_bh\n",__FUNCTION__,__LINE__);
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 
 	if(x->props.extra_flags & XFRM_SA_PCPU_SUB)
@@ -1707,6 +1714,7 @@ int xfrm_state_update(struct xfrm_state *x)
 		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 		xfrm_state_put(x1);
 		spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+		printk(KERN_ALERT "DEBUG: Passed %s %d call spin_unlock_bh\n",__FUNCTION__,__LINE__);
 		return -ESRCH;
 	}
 
@@ -1718,13 +1726,14 @@ int xfrm_state_update(struct xfrm_state *x)
 	}
 
 	if (x1->km.state == XFRM_STATE_ACQ) {
-		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+		printk(KERN_ALERT "DEBUG: Passed %s %d x1->km.state == XFRM_STATE_ACQ \n",__FUNCTION__,__LINE__);
 		__xfrm_state_insert(x);
 		x = NULL;
 	}
 	err = 0;
 
 out:
+	printk(KERN_ALERT "DEBUG: Passed %s %d call spin_unlock_bh\n",__FUNCTION__,__LINE__);
 	spin_unlock_bh(&net->xfrm.xfrm_state_lock);
 
 	if (to_put){
@@ -1745,6 +1754,7 @@ out:
 	}
 
 	err = -EINVAL;
+	printk(KERN_ALERT "DEBUG: Passed %s %d call spin_lock_bh\n",__FUNCTION__,__LINE__);
 	spin_lock_bh(&x1->lock);
 	if (likely(x1->km.state == XFRM_STATE_VALID)) {
 		printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
@@ -1770,9 +1780,9 @@ out:
 		}
 
 		if (x->props.smark.m || x->props.smark.v || x->if_id) {
-			printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+			printk(KERN_ALERT "DEBUG: Passed %s %d call spin_lock_bh \n",__FUNCTION__,__LINE__);
 			spin_lock_bh(&net->xfrm.xfrm_state_lock);
-
+			printk(KERN_ALERT "DEBUG: Passed %s %d  called spin_lock_bh \n",__FUNCTION__,__LINE__);
 			if (x->props.smark.m || x->props.smark.v)
 				x1->props.smark = x->props.smark;
 
@@ -1781,6 +1791,7 @@ out:
 
 			__xfrm_state_bump_genids(x1);
 			spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+			printk(KERN_ALERT "DEBUG: Passed %s %d  called spin_unlock_bh \n",__FUNCTION__,__LINE__);
 		}
 
 		err = 0;
@@ -1791,8 +1802,7 @@ out:
 
 fail:
 	spin_unlock_bh(&x1->lock);
-
-	printk(KERN_ALERT "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+	printk(KERN_ALERT "DEBUG: Passed %s %d  called spin_unlock_bh \n",__FUNCTION__,__LINE__);
 	xfrm_state_put(x1);
 
 	return err;
@@ -2027,6 +2037,7 @@ int xfrm_alloc_spi(struct xfrm_state *x, u32 low, u32 high)
 	u32 mark = x->mark.v & x->mark.m;
 
 	spin_lock_bh(&x->lock);
+	printk(KERN_ALERT "DEBUG: Passed %s %d spin_lock_bh x %p", __func__, __LINE__,x);
 	if (x->km.state == XFRM_STATE_DEAD)
 		goto unlock;
 
@@ -2065,6 +2076,7 @@ int xfrm_alloc_spi(struct xfrm_state *x, u32 low, u32 high)
 	}
 
 unlock:
+	printk(KERN_ALERT "DEBUG: Passed %s %d spin_unlock_bh x %p", __func__, __LINE__,x);
 	spin_unlock_bh(&x->lock);
 
 	return err;
