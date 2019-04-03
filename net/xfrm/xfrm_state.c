@@ -701,7 +701,6 @@ int xfrm_state_delete(struct xfrm_state *x)
 
 	spin_lock_bh(&x->lock);
 	err = __xfrm_state_delete(x);
-	printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 	spin_unlock_bh(&x->lock);
 
 	return err;
