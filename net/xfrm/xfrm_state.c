@@ -669,10 +669,12 @@ int __xfrm_state_delete(struct xfrm_state *x)
 		spin_lock(&net->xfrm.xfrm_state_lock);
 		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
 		list_del(&x->km.all);
-		hlist_del_rcu(&x->bydst);
-		hlist_del_rcu(&x->bysrc);
-		if (x->id.spi)
-			hlist_del_rcu(&x->byspi);
+		if(!(x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
+			hlist_del_rcu(&x->bydst);
+			hlist_del_rcu(&x->bysrc);
+			if (x->id.spi)
+				hlist_del_rcu(&x->byspi);
+		}
 		net->xfrm.state_num--;
 		
 		printk(KERN_ALERT "DEBUG: Passed %s %d\n",__FUNCTION__,__LINE__);
