@@ -2285,7 +2285,7 @@ struct napi_gro_cb {
 	/* jiffies when first packet was created/queued */
 	unsigned long age;
 
-	/* Used in ipv6_gro_receive() and foo-over-udp */
+	/* Used in ipv6_gro_receive() and foo-over-udp and esp-in-udp */
 	u16	proto;
 
 	/* This is non-zero if the packet may be of the same flow. */

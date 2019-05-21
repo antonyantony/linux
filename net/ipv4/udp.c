@@ -2526,6 +2526,7 @@ int udp_lib_setsockopt(struct sock *sk, int level, int optname,
 		case UDP_ENCAP_ESPINUDP:
 		case UDP_ENCAP_ESPINUDP_NON_IKE:
 			up->encap_rcv = xfrm4_udp_encap_rcv;
+			up->gro_receive = xfrm4_gro_udp_encap_rcv;
 			/* FALLTHROUGH */
 		case UDP_ENCAP_L2TPINUDP:
 			up->encap_type = val;

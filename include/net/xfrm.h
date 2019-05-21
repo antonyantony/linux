@@ -1575,6 +1575,8 @@ int xfrm4_extract_header(struct sk_buff *skb);
 int xfrm4_extract_input(struct xfrm_state *x, struct sk_buff *skb);
 int xfrm4_rcv_encap(struct sk_buff *skb, int nexthdr, __be32 spi,
 		    int encap_type);
+struct sk_buff *xfrm4_gro_udp_encap_rcv(struct sock *sk, struct list_head *head,
+					struct sk_buff *skb);
 int xfrm4_transport_finish(struct sk_buff *skb, int async);
 int xfrm4_rcv(struct sk_buff *skb);
 int xfrm_parse_spi(struct sk_buff *skb, u8 nexthdr, __be32 *spi, __be32 *seq);
@@ -1619,6 +1621,8 @@ int xfrm6_find_1stfragopt(struct xfrm_state *x, struct sk_buff *skb,
 
 #ifdef CONFIG_XFRM
 int xfrm4_udp_encap_rcv(struct sock *sk, struct sk_buff *skb);
+struct sk_buff *xfrm4_gro_udp_encap_rcv(struct sock *sk, struct list_head *head,
+					struct sk_buff *skb);
 int xfrm_user_policy(struct sock *sk, int optname,
 		     u8 __user *optval, int optlen);
 #else
@@ -1632,6 +1636,13 @@ static inline int xfrm4_udp_encap_rcv(struct sock *sk, struct sk_buff *skb)
  	/* should not happen */
  	kfree_skb(skb);
 	return 0;
+}
+
+struct sk_buff *xfrm4_gro_udp_encap_rcv(struct sock *sk, struct list_head *head,
+					struct sk_buff *skb)
+{
+	/* should not happen */
+	return NULL;
 }
 #endif
 
