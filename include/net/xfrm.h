@@ -1998,6 +1998,13 @@ static inline int xfrm_if_id_put(struct sk_buff *skb, __u32 if_id)
 	return ret;
 }
 
+static inline int xfrm_pcpu_id_put(struct sk_buff *skb)
+{
+	int ret = nla_put_u32(skb, XFRMA_SA_PCPU, get_cpu());
+	put_cpu();
+	return ret;
+}
+
 static inline int xfrm_tunnel_check(struct sk_buff *skb, struct xfrm_state *x,
 				    unsigned int family)
 {

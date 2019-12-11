@@ -1138,6 +1138,10 @@ static void xfrm_state_look_at(struct xfrm_policy *pol, struct xfrm_state *x,
 	}
 }
 
+
+/* Antony hack decleartion or move the code up */
+static void __xfrm_state_insert(struct xfrm_state *x);
+
 struct xfrm_state *
 xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 		const struct flowi *fl, struct xfrm_tmpl *tmpl,
@@ -1148,6 +1152,7 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 	struct net *net = xp_net(pol);
 	unsigned int h, h_wildcard;
 	struct xfrm_state *x, *x0, *to_put;
+	struct xfrm_state *xh = NULL;
 	int acquire_in_progress = 0;
 	int error = 0;
 	struct xfrm_state *best = NULL;
@@ -1155,6 +1160,7 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 	unsigned short encap_family = tmpl->encap_family;
 	unsigned int sequence;
 	struct km_event c;
+	u32 pcpu_id = -1;
 
 	to_put = NULL;
 
@@ -1175,6 +1181,7 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 			xfrm_state_look_at(pol, x, fl, encap_family,
 					   &best, &acquire_in_progress, &error);
 	}
+
 	if (best || acquire_in_progress)
 		goto found;
 
@@ -1197,18 +1204,22 @@ found:
 	x = best;
 
 	if (!error && x && x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
-		struct xfrm_state_pcpu *xpcpu;
+		struct xfrm_state_pcpu *xpcpu = x->xfrmpcpu;
 		struct xfrm_state *xsp;
-
-		xpcpu = x->xfrmpcpu;
-		xsp = *per_cpu_ptr(xpcpu->x, get_cpu());
-		if (xsp)
-			x = xsp;
-
+		pcpu_id = get_cpu();
 		put_cpu();
+		xsp = *per_cpu_ptr(xpcpu->x, pcpu_id);
+		if (xsp) {
+			if (xsp->km.state == XFRM_STATE_VALID)
+				x = xsp;
+		} else {
+			xh = x;
+			x = NULL;
+		}
 	}
 
 	if (!x && !error && !acquire_in_progress) {
+		/* AA_2019 does this section matter for pCPU acquire ???? */
 		if (tmpl->id.spi &&
 		    (x0 = __xfrm_state_lookup(net, mark, daddr, tmpl->id.spi,
 					      tmpl->id.proto, encap_family)) != NULL) {
@@ -1223,7 +1234,12 @@ found:
 		 * handle the flood.
 		 */
 		if (!km_is_alive(&c)) {
-			error = -ESRCH;
+			if (xh) {
+				x = xh;
+				xh = NULL;
+			} else {
+				error = -ESRCH;
+			}
 			goto out;
 		}
 
@@ -1239,6 +1255,7 @@ found:
 		x->if_id = if_id;
 
 		error = security_xfrm_state_alloc_acquire(x, pol->security, fl->flowi_secid);
+
 		if (error) {
 			x->km.state = XFRM_STATE_DEAD;
 			to_put = x;
@@ -1246,7 +1263,17 @@ found:
 			goto out;
 		}
 
-		if (km_query(x, tmpl, pol) == 0) {
+		if (km_query(x, tmpl, pol) == 0 && xh) {
+			struct xfrm_state_pcpu *xpcpu;
+			x->props.extra_flags &= XFRM_SA_PCPU_SUB;
+			x->pcpu_num = pcpu_id;
+			xpcpu = xh->xfrmpcpu;
+			x->km.state = XFRM_STATE_ACQ;
+			x->lft.hard_add_expires_seconds = net->xfrm.sysctl_acq_expires;
+			*per_cpu_ptr(xpcpu->x, x->pcpu_num) = x;
+			// xfrm_state_put(xh); Antony do I need this?
+
+		} else if (km_query(x, tmpl, pol) == 0) {
 			spin_lock_bh(&net->xfrm.xfrm_state_lock);
 			x->km.state = XFRM_STATE_ACQ;
 			list_add(&x->km.all, &net->xfrm.state_all);
@@ -1271,6 +1298,7 @@ found:
 			error = -ESRCH;
 		}
 	}
+
 out:
 	if (x) {
 		if (!xfrm_state_hold_rcu(x)) {
@@ -1290,6 +1318,10 @@ out:
 			xfrm_state_put(x);
 			x = NULL;
 		}
+	}
+
+	if (xh && pcpu_id < -1) {
+		x = xh;
 	}
 
 	return x;
