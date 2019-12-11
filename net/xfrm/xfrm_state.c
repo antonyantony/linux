@@ -1148,6 +1148,7 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 	struct net *net = xp_net(pol);
 	unsigned int h, h_wildcard;
 	struct xfrm_state *x, *x0, *to_put;
+	struct xfrm_state *xh = NULL;
 	int acquire_in_progress = 0;
 	int error = 0;
 	struct xfrm_state *best = NULL;
@@ -1155,6 +1156,7 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 	unsigned short encap_family = tmpl->encap_family;
 	unsigned int sequence;
 	struct km_event c;
+	u32 pcpu_id = -1;
 
 	to_put = NULL;
 
@@ -1199,16 +1201,21 @@ found:
 	if (!error && x && x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
 		struct xfrm_state_pcpu *xpcpu;
 		struct xfrm_state *xsp;
-
-		xpcpu = x->xfrmpcpu;
-		xsp = *per_cpu_ptr(xpcpu->x, get_cpu());
-		if (xsp)
-			x = xsp;
-
+		pcpu_id = get_cpu();
 		put_cpu();
+		xpcpu = x->xfrmpcpu;
+		xsp = *per_cpu_ptr(xpcpu->x, pcpu_id);
+		if (xsp) {
+			if (xsp->km.state != XFRM_STATE_ACQ)
+				x = xsp;
+		} else {
+			xh = x;
+			x = NULL;
+		}
 	}
 
 	if (!x && !error && !acquire_in_progress) {
+		/* AA_2019 does it matter for pCPU acquire ???? */
 		if (tmpl->id.spi &&
 		    (x0 = __xfrm_state_lookup(net, mark, daddr, tmpl->id.spi,
 					      tmpl->id.proto, encap_family)) != NULL) {
@@ -1271,6 +1278,7 @@ found:
 			error = -ESRCH;
 		}
 	}
+
 out:
 	if (x) {
 		if (!xfrm_state_hold_rcu(x)) {
@@ -1290,6 +1298,18 @@ out:
 			xfrm_state_put(x);
 			x = NULL;
 		}
+	}
+
+	if (xh && pcpu_id > -1) {
+		struct xfrm_state_pcpu *xpcpu;
+		x->pcpu_num = pcpu_id;
+		x->props.extra_flags &= XFRM_SA_PCPU_SUB;
+		spin_lock_bh(&net->xfrm.xfrm_state_lock);
+		xpcpu = per_cpu_ptr(xh->xfrmpcpu, x->pcpu_num);
+		*per_cpu_ptr(xpcpu->x, x->pcpu_num) = x;
+		xfrm_state_put(xh);
+		spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+		x = xh;
 	}
 
 	return x;

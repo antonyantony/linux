@@ -2982,6 +2982,9 @@ static int build_acquire(struct sk_buff *skb, struct xfrm_state *x,
 		err = xfrm_mark_put(skb, &xp->mark);
 	if (!err)
 		err = xfrm_if_id_put(skb, xp->if_id);
+	if (!err)
+		err = xfrm_pcpu_id_put(skb);
+
 	if (err) {
 		nlmsg_cancel(skb, nlh);
 		return err;
