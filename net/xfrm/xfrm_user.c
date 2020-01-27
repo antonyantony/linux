@@ -511,6 +511,13 @@ static void copy_from_user_state(struct xfrm_state *x, struct xfrm_usersa_info *
 
 	if (!x->sel.family && !(p->flags & XFRM_STATE_AF_UNSPEC))
 		x->sel.family = p->family;
+
+	if ((x->props.flags & XFRM_STATE_ESN) == 0) {
+		if (x->lft.soft_packet_limit == XFRM_INF)
+			x->lft.soft_packet_limit = U32_MAX;
+		if (x->lft.hard_packet_limit == XFRM_INF)
+			x->lft.hard_packet_limit = U32_MAX;
+	}
 }
 
 /*
