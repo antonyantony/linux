@@ -98,6 +98,22 @@ static inline unsigned int __xfrm_dst_hash(const xfrm_address_t *daddr,
 	return (h ^ (h >> 16)) & hmask;
 }
 
+static inline unsigned int
+__xfrm_dst_only_hash(const xfrm_address_t *daddr, u8 proto,
+		     unsigned short family, unsigned int hmask)
+{
+	unsigned int h = (__force u32)proto;
+	switch (family) {
+	case AF_INET:
+		h ^= __xfrm4_addr_hash(daddr);
+		break;
+	case AF_INET6:
+		h ^= __xfrm6_addr_hash(daddr);
+		break;
+	}
+	return (h ^ (h >> 10) ^ (h >> 20)) & hmask;
+}
+
 static inline unsigned int __xfrm_src_hash(const xfrm_address_t *daddr,
 					   const xfrm_address_t *saddr,
 					   unsigned short family,

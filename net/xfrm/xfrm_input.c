@@ -735,6 +735,7 @@ resume:
 			if (sp)
 				sp->olen = 0;
 			skb_dst_drop(skb);
+			skb->ip_summed = CHECKSUM_NONE;
 			gro_cells_receive(&gro_cells, skb);
 			return err;
 		}
