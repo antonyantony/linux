@@ -1582,9 +1582,11 @@ struct xfrm_state *xfrm_migrate_state_find(struct xfrm_migrate *m, struct net *n
 }
 EXPORT_SYMBOL(xfrm_migrate_state_find);
 
-struct xfrm_state *xfrm_state_migrate(struct xfrm_state *x,
+struct xfrm_state *xfrm_state_migrate(struct net *net,
+				      struct xfrm_state *x,
 				      struct xfrm_migrate *m,
-				      struct xfrm_encap_tmpl *encap)
+				      struct xfrm_encap_tmpl *encap,
+				      struct xfrm_user_offload *xuo)
 {
 	struct xfrm_state *xc;
 
@@ -1601,6 +1603,9 @@ struct xfrm_state *xfrm_state_migrate(struct xfrm_state *x,
 		   state is to be updated as it is a part of triplet */
 		xfrm_state_insert(xc);
 	} else {
+		if (xuo)
+			if (xfrm_dev_state_add(net, x, xuo))
+				goto error;
 		if (xfrm_state_add(xc) < 0)
 			goto error;
 	}

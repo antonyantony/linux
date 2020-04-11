@@ -2366,6 +2366,7 @@ static int xfrm_do_migrate(struct sk_buff *skb, struct nlmsghdr *nlh,
 	int n = 0;
 	struct net *net = sock_net(skb->sk);
 	struct xfrm_encap_tmpl  *encap = NULL;
+	struct xfrm_user_offload *xuo = NULL;
 
 	if (attrs[XFRMA_MIGRATE] == NULL)
 		return -EINVAL;
@@ -2390,7 +2391,11 @@ static int xfrm_do_migrate(struct sk_buff *skb, struct nlmsghdr *nlh,
 			return 0;
 	}
 
-	err = xfrm_migrate(&pi->sel, pi->dir, type, m, n, kmp, net, encap);
+	if (attrs[XFRMA_OFFLOAD_DEV]) {
+		xuo = nla_data(attrs[XFRMA_OFFLOAD_DEV]);
+	}
+
+	err = xfrm_migrate(&pi->sel, pi->dir, type, m, n, kmp, net, encap, xuo);
 
 	kfree(encap);
 
