@@ -2590,6 +2590,9 @@ void xfrm_state_fini(struct net *net)
 static void xfrm_audit_helper_sainfo(struct xfrm_state *x,
 				     struct audit_buffer *audit_buf)
 {
+
+	printk(KERN_ALERT "DEBUG: Antony Disable AUDIT %s %d\n",__FUNCTION__,__LINE__);
+	return;
 	struct xfrm_sec_ctx *ctx = x->security;
 	u32 spi = ntohl(x->id.spi);
 
