@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 7
 SUBLEVEL = 0
-EXTRAVERSION = -rc5
+EXTRAVERSION = -rc5-pcpu-acquire
 NAME = Kleptomaniac Octopus
 
 # *DOCUMENTATION*
