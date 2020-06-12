@@ -152,10 +152,15 @@ struct xfrm_state {
 	};
 	struct hlist_node	bysrc;
 	struct hlist_node	byspi;
+	struct list_head	cpuhead;
+	struct list_head	cpu;
+
+//	struct hlist_node	byhead;
 
 	refcount_t		refcnt;
 	spinlock_t		lock;
 
+	u32			pcpu_num;
 	struct xfrm_id		id;
 	struct xfrm_selector	sel;
 	struct xfrm_mark	mark;
