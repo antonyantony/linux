@@ -966,6 +966,8 @@ xfrm_init_tempstate(struct xfrm_state *x, const struct flowi *fl,
 	x->props.mode = tmpl->mode;
 	x->props.reqid = tmpl->reqid;
 	x->props.family = tmpl->encap_family;
+	printk(KERN_ALERT "DEBUG: Passed %s %d x->type_offload %p x %p NEXT line is not necessary", __FUNCTION__, __LINE__, x->type_offload, x);
+	x->type_offload = NULL;
 }
 
 static struct xfrm_state *__xfrm_state_lookup(struct net *net, u32 mark,
@@ -1091,6 +1093,7 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 	struct net *net = xp_net(pol);
 	unsigned int h, h_wildcard;
 	struct xfrm_state *x, *x0, *to_put;
+	struct xfrm_state *xh = NULL;
 	int acquire_in_progress = 0;
 	int error = 0;
 	struct xfrm_state *best = NULL;
@@ -1098,6 +1101,9 @@ xfrm_state_find(const xfrm_address_t *daddr, const xfrm_address_t *saddr,
 	unsigned short encap_family = tmpl->encap_family;
 	unsigned int sequence;
 	struct km_event c;
+	u32 pcpu_id = get_cpu();
+
+	put_cpu();
 
 	to_put = NULL;
 
@@ -1141,12 +1147,24 @@ found:
 
 	if (!error && x && x->props.extra_flags & XFRM_SA_PCPU_HEAD) {
 		struct xfrm_state *xsp;
+		xsp = xfrm_state_find_sub(net, x, pcpu_id);
 
-		xsp = xfrm_state_find_sub(net, x, get_cpu());
-		if (xsp)
-			x = xsp;
+		printk(KERN_ALERT "DEBUG: Passed %s %d x %p xsp %p", __FUNCTION__, __LINE__, x, xsp);
+		xh = x;
+		if (xsp) {
+			best = NULL;
+			xfrm_state_look_at(pol, xsp, fl, encap_family,
+					   &best, &acquire_in_progress, &error);
+			x = best;
+			if (xsp->km.state == XFRM_STATE_VALID) {
+				x = xsp;
+				xh = NULL;
+			}
+		} else {
+			x = NULL;
+		}
 
-		put_cpu();
+		printk(KERN_ALERT "DEBUG: Passed %s %d x %p", __FUNCTION__, __LINE__, x);
 	}
 
 	if (!x && !error && !acquire_in_progress) {
@@ -1164,7 +1182,12 @@ found:
 		 * handle the flood.
 		 */
 		if (!km_is_alive(&c)) {
-			error = -ESRCH;
+			if (xh) {
+				x = xh;
+				xh = NULL;
+			} else {
+				error = -ESRCH;
+			}
 			goto out;
 		}
 
@@ -1178,6 +1201,8 @@ found:
 		xfrm_init_tempstate(x, fl, tmpl, daddr, saddr, family);
 		memcpy(&x->mark, &pol->mark, sizeof(x->mark));
 		x->if_id = if_id;
+		x->pcpu_num = pcpu_id;
+		printk(KERN_ALERT "DEBUG: Passed %s %d acquire cpu id %d x %p", __FUNCTION__, __LINE__, x->pcpu_num, x);
 
 		error = security_xfrm_state_alloc_acquire(x, pol->security, fl->flowi_secid);
 		if (error) {
@@ -1188,23 +1213,39 @@ found:
 		}
 
 		if (km_query(x, tmpl, pol) == 0) {
-			spin_lock_bh(&net->xfrm.xfrm_state_lock);
-			x->km.state = XFRM_STATE_ACQ;
-			list_add(&x->km.all, &net->xfrm.state_all);
-			hlist_add_head_rcu(&x->bydst, net->xfrm.state_bydst + h);
-			h = xfrm_src_hash(net, daddr, saddr, encap_family);
-			hlist_add_head_rcu(&x->bysrc, net->xfrm.state_bysrc + h);
-			if (x->id.spi) {
-				h = xfrm_spi_hash(net, &x->id.daddr, x->id.spi, x->id.proto, encap_family);
-				hlist_add_head_rcu(&x->byspi, net->xfrm.state_byspi + h);
+			if (xh) {
+				/* Do I need spinloc here? */
+				spin_lock_bh(&net->xfrm.xfrm_state_lock);
+				x->km.state = XFRM_STATE_ACQ;
+				x->lft.hard_add_expires_seconds = net->xfrm.sysctl_acq_expires;
+				list_add(&x->cpu, &xh->cpuhead);
+				// xfrm_state_put(xh);
+
+				hrtimer_start(&x->mtimer,
+					      ktime_set(net->xfrm.sysctl_acq_expires, 0),
+					      HRTIMER_MODE_REL_SOFT);
+				spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+
+				xfrm_state_insert(x);
+			} else {
+				spin_lock_bh(&net->xfrm.xfrm_state_lock);
+				x->km.state = XFRM_STATE_ACQ;
+				list_add(&x->km.all, &net->xfrm.state_all);
+				hlist_add_head_rcu(&x->bydst, net->xfrm.state_bydst + h);
+				h = xfrm_src_hash(net, daddr, saddr, encap_family);
+				hlist_add_head_rcu(&x->bysrc, net->xfrm.state_bysrc + h);
+				if (x->id.spi) {
+					h = xfrm_spi_hash(net, &x->id.daddr, x->id.spi, x->id.proto, encap_family);
+					hlist_add_head_rcu(&x->byspi, net->xfrm.state_byspi + h);
+				}
+				x->lft.hard_add_expires_seconds = net->xfrm.sysctl_acq_expires;
+				hrtimer_start(&x->mtimer,
+					      ktime_set(net->xfrm.sysctl_acq_expires, 0),
+					      HRTIMER_MODE_REL_SOFT);
+				net->xfrm.state_num++;
+				xfrm_hash_grow_check(net, x->bydst.next != NULL);
+				spin_unlock_bh(&net->xfrm.xfrm_state_lock);
 			}
-			x->lft.hard_add_expires_seconds = net->xfrm.sysctl_acq_expires;
-			hrtimer_start(&x->mtimer,
-				      ktime_set(net->xfrm.sysctl_acq_expires, 0),
-				      HRTIMER_MODE_REL_SOFT);
-			net->xfrm.state_num++;
-			xfrm_hash_grow_check(net, x->bydst.next != NULL);
-			spin_unlock_bh(&net->xfrm.xfrm_state_lock);
 		} else {
 			x->km.state = XFRM_STATE_DEAD;
 			to_put = x;
@@ -1222,6 +1263,7 @@ out:
 		*err = acquire_in_progress ? -EAGAIN : error;
 	}
 	rcu_read_unlock();
+
 	if (to_put)
 		xfrm_state_put(to_put);
 
@@ -1231,6 +1273,10 @@ out:
 			xfrm_state_put(x);
 			x = NULL;
 		}
+	}
+
+	if (xh) {
+		x = xh;
 	}
 
 	return x;
@@ -1472,6 +1518,10 @@ int xfrm_state_add(struct xfrm_state *x)
 		use_spi = 0;
 
 	x1 = __xfrm_state_locate(x, use_spi, family);
+	if (x1)
+		printk(KERN_ALERT "DEBUG: Passed %s %d x1 %p extra_flags %u x extra_flags%u", __FUNCTION__, __LINE__, x1,
+			x1->props.extra_flags, x1->props.extra_flags);
+
 	if (x1) {
 		if ((x1->props.extra_flags & XFRM_SA_PCPU_HEAD) &&
 		    (x->props.extra_flags & XFRM_SA_PCPU_SUB)) {
@@ -1482,6 +1532,7 @@ int xfrm_state_add(struct xfrm_state *x)
 		} else {
 			to_put = x1;
 			x1 = NULL;
+			printk(KERN_ALERT "DEBUG: Passed %s %d err EEXIST", __FUNCTION__, __LINE__);
 			err = -EEXIST;
 			goto out;
 		}

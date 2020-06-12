@@ -979,11 +979,10 @@ static int copy_to_user_state_extra(struct xfrm_state *x,
 			goto out;
 	}
 
-	if (x->pcpu_num) {
-		ret = nla_put_u32(skb, XFRMA_SA_PCPU, x->pcpu_num);
-		if (ret)
-			goto out;
-	}
+	printk(KERN_ALERT "DEBUG: Passed %s %d cpu id %d x %p", __FUNCTION__, __LINE__, x->pcpu_num, x);
+	ret = nla_put_u32(skb, XFRMA_SA_PCPU, x->pcpu_num);
+	if (ret)
+		goto out;
 
 	if (x->security)
 		ret = copy_sec_ctx(x->security, skb);
@@ -2974,6 +2973,8 @@ static int build_acquire(struct sk_buff *skb, struct xfrm_state *x,
 		err = xfrm_mark_put(skb, &xp->mark);
 	if (!err)
 		err = xfrm_if_id_put(skb, xp->if_id);
+	if (!err)
+		err = nla_put_u32(skb, XFRMA_SA_PCPU, x->pcpu_num);
 	if (err) {
 		nlmsg_cancel(skb, nlh);
 		return err;
