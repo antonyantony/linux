@@ -979,10 +979,12 @@ static int copy_to_user_state_extra(struct xfrm_state *x,
 			goto out;
 	}
 
-	printk(KERN_ALERT "DEBUG: Passed %s %d cpu id %d x %p", __FUNCTION__, __LINE__, x->pcpu_num, x);
-	ret = nla_put_u32(skb, XFRMA_SA_PCPU, x->pcpu_num);
-	if (ret)
-		goto out;
+	if (x->props.extra_flags & XFRM_SA_PCPU_SUB) {
+		ret = nla_put_u32(skb, XFRMA_SA_PCPU, x->pcpu_num);
+		printk(KERN_ALERT "DEBUG: Passed %s %d cpu id %d x %p", __FUNCTION__, __LINE__, x->pcpu_num, x);
+		if (ret)
+			goto out;
+	}
 
 	if (x->security)
 		ret = copy_sec_ctx(x->security, skb);
@@ -1335,6 +1337,7 @@ static int xfrm_alloc_userspi(struct sk_buff *skb, struct nlmsghdr *nlh,
 	u32 mark;
 	struct xfrm_mark m;
 	u32 if_id = 0;
+	u32 pcpu_num = 0;
 
 	p = nlmsg_data(nlh);
 	err = verify_spi_info(p->info.id.proto, p->min, p->max);
@@ -1351,8 +1354,16 @@ static int xfrm_alloc_userspi(struct sk_buff *skb, struct nlmsghdr *nlh,
 	if (attrs[XFRMA_IF_ID])
 		if_id = nla_get_u32(attrs[XFRMA_IF_ID]);
 
+	if (attrs[XFRMA_SA_PCPU]) {
+		pcpu_num = nla_get_u32(attrs[XFRMA_SA_PCPU]);
+		if (pcpu_num > num_possible_cpus()) {
+			err = -EINVAL;
+			goto out_noput;
+		}
+	}
+
 	if (p->info.seq) {
-		x = xfrm_find_acq_byseq(net, mark, p->info.seq);
+		x = xfrm_find_acq_byseq(net, mark, p->info.seq, pcpu_num);
 		if (x && !xfrm_addr_equal(&x->id.daddr, daddr, family)) {
 			xfrm_state_put(x);
 			x = NULL;
@@ -1361,7 +1372,7 @@ static int xfrm_alloc_userspi(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 	if (!x)
 		x = xfrm_find_acq(net, &m, p->info.mode, p->info.reqid,
-				  if_id, p->info.id.proto, daddr,
+				  if_id, pcpu_num, p->info.id.proto, daddr,
 				  &p->info.saddr, 1,
 				  family);
 	err = -ENOENT;
@@ -2044,6 +2055,8 @@ static int build_aevent(struct sk_buff *skb, struct xfrm_state *x, const struct 
 	err = xfrm_if_id_put(skb, x->if_id);
 	if (err)
 		goto out_cancel;
+	if (x->props.extra_flags & XFRM_SA_PCPU_SUB)
+		err = nla_put_u32(skb, XFRMA_SA_PCPU, x->pcpu_num);
 
 	nlmsg_end(skb, nlh);
 	return 0;
@@ -2739,6 +2752,11 @@ static int build_expire(struct sk_buff *skb, struct xfrm_state *x, const struct 
 	err = xfrm_if_id_put(skb, x->if_id);
 	if (err)
 		return err;
+	if (x->props.extra_flags & XFRM_SA_PCPU_SUB) {
+		err = nla_put_u32(skb, XFRMA_SA_PCPU, x->pcpu_num);
+		if (err)
+			return err;
+	}
 
 	nlmsg_end(skb, nlh);
 	return 0;
@@ -2973,7 +2991,7 @@ static int build_acquire(struct sk_buff *skb, struct xfrm_state *x,
 		err = xfrm_mark_put(skb, &xp->mark);
 	if (!err)
 		err = xfrm_if_id_put(skb, xp->if_id);
-	if (!err)
+	if (!err && x->props.extra_flags & XFRM_SA_PCPU_SUB)
 		err = nla_put_u32(skb, XFRMA_SA_PCPU, x->pcpu_num);
 	if (err) {
 		nlmsg_cancel(skb, nlh);
