@@ -1199,6 +1199,12 @@ found:
 			goto out;
 		}
 
+		if (best && best->props.extra_flags & XFRM_SA_PCPU_HEAD) {
+			/* Antony do this before the call to km_query */
+			x->pcpu_num = pcpu_id;
+			x->props.extra_flags |= XFRM_SA_PCPU_SUB;
+		}
+
 		if (km_query(x, tmpl, pol) == 0) {
 			spin_lock_bh(&net->xfrm.xfrm_state_lock);
 
