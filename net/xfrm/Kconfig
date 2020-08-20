@@ -102,6 +102,16 @@ config XFRM_ESP
 	select CRYPTO_SEQIV
 	select CRYPTO_SHA256
 
+config XFRM_REDACT_SECRET
+	bool "Redact xfrm SA secret"
+	depends on XFRM && SECURITY_LOCKDOWN_LSM
+	default n
+	help
+	  Enable to redact XFRM SA secret in the netlink message
+	  to user space.
+	  Redacting secret is a FIPS 140-2 requirement.
+	  e.g. ip xfrm state; will show redacted the SA secret.
+
 config XFRM_IPCOMP
 	tristate
 	select XFRM_ALGO
