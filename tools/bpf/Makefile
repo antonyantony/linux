@@ -9,7 +9,7 @@ MAKE = make
 INSTALL ?= install
 
 CFLAGS += -Wall -O2
-CFLAGS += -D__EXPORTED_HEADERS__ -I$(srctree)/tools/include/uapi \
+CFLAGS += -D__EXPORTED_HEADERS__ -I$(srctree)/usr/include -I$(srctree)/tools/include/uapi \
 	  -I$(srctree)/tools/include
 
 # This will work when bpf is built in tools env. where srctree
