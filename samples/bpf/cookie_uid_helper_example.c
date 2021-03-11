@@ -167,7 +167,7 @@ static void prog_load(void)
 static void prog_attach_iptables(char *file)
 {
 	int ret;
-	char rules[100];
+	char rules[128];
 
 	if (bpf_obj_pin(prog_fd, file))
 		error(1, errno, "bpf_obj_pin");
