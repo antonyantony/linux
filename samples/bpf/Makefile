@@ -191,7 +191,7 @@ BPF_EXTRA_CFLAGS += -I$(srctree)/arch/mips/include/asm/mach-generic
 endif
 endif
 
-TPROGS_CFLAGS += -Wall -g -O2
+TPROGS_CFLAGS += -Wall -g -O2 -Werror
 TPROGS_CFLAGS += -Wmissing-prototypes
 TPROGS_CFLAGS += -Wstrict-prototypes
 
