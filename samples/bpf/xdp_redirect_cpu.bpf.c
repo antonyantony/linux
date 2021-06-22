@@ -2,6 +2,9 @@
  *
  *  GPLv2, Copyright(c) 2017 Jesper Dangaard Brouer, Red Hat, Inc.
  */
+
+#include <bpf/bpf_endian.h>
+#include "string.h"
 #include "vmlinux.h"
 #include "xdp_sample.bpf.h"
 #include "xdp_sample_shared.h"
@@ -428,6 +431,106 @@ u32 get_ipv6_hash_ip_pair(struct xdp_md *ctx, u64 nh_off)
 	cpu_hash = SuperFastHash((char *)&cpu_hash, 4, INITVAL + ip6h->nexthdr);
 
 	return cpu_hash;
+}
+
+/* Load-Balance IPsec/ESP traffic based on SPI and CPU id in xfrm state */
+SEC("xdp")
+int xdp_prognum6_lb_xfrm_spi(struct xdp_md *ctx)
+{
+	void *data_end = (void *)(long)ctx->data_end;
+	void *data     = (void *)(long)ctx->data;
+	struct ethhdr *eth = data;
+	u8 ip_proto = IPPROTO_UDP;
+	struct datarec *rec;
+	u16 eth_proto = 0;
+	u64 l3_offset = 0;
+	u32 cpu_dest = 0;
+	u32 cpu_idx = 0;
+	u32 *cpu_lookup;
+	u32 *cpu_max;
+	u32 cpu_hash = 0;
+	u32 key = bpf_get_smp_processor_id();
+	u32 key0 = 0;
+	struct iphdr *iph = NULL;
+	struct bpf_xfrm_state x;
+	struct bpf_xfrm_state p = {};
+	int ret;
+	u8 *xprth;
+	__be32 *ehdr;
+	u32 spi = 0;
+
+	/* Count RX packet in map */
+	rec = bpf_map_lookup_elem(&rx_cnt, &key);
+	if (!rec)
+		return XDP_PASS;
+
+	NO_TEAR_INC(rec->processed);
+	cpu_max = bpf_map_lookup_elem(&cpus_count, &key0);
+
+	if (!cpu_max)
+		return XDP_ABORTED;
+
+	if (!(parse_eth(eth, data_end, &eth_proto, &l3_offset)))
+		return XDP_PASS; /* Just skip */
+
+	switch (eth_proto) {
+	case ETH_P_IP:
+		ip_proto = get_proto_ipv4(ctx, l3_offset);
+		p.family = AF_INET;
+		break;
+	case ETH_P_IPV6:
+		p.family = AF_INET6;
+		ip_proto = get_proto_ipv6(ctx, l3_offset);
+		return XDP_PASS; /* Just skip */
+	case ETH_P_ARP: /* ARP packet handled on CPU idx 0 */
+	default:
+		cpu_hash = 0;
+	}
+
+	if (ip_proto != IPPROTO_ESP)
+		return XDP_PASS; /* Just skip */
+
+	iph = data + l3_offset;
+	if (iph + 1 > data_end)
+		return XDP_PASS; /* Just skip */
+
+	if (p.family == AF_INET) {
+		p.remote_ipv4 =	iph->daddr;
+		memset(&p.remote_ipv6[1], 0, sizeof(__u32) * 3);
+	}
+
+	xprth = (u8 *)(data + l3_offset + iph->ihl * 4);
+	if (xprth + 4 > data_end)
+		return XDP_PASS;
+
+	ehdr = (__be32 *)xprth;
+	p.spi = ehdr[0];
+	p.proto = iph->protocol;
+	spi = bpf_ntohl(p.spi);
+
+	ret = bpf_xdp_get_xfrm_state_spi(ctx, &p, &x, sizeof(x), 0);
+
+	if (ret < 0)
+		return XDP_PASS;
+
+	cpu_idx = x.pcpu_num;
+
+	if (cpu_idx >= *cpu_max) {
+		rec->issue++;
+		return XDP_PASS;
+	}
+
+	cpu_lookup = bpf_map_lookup_elem(&cpus_available, &cpu_idx);
+	if (!cpu_lookup)
+		return XDP_ABORTED;
+	cpu_dest = *cpu_lookup;
+
+	if (cpu_dest >= *cpu_max) {
+		rec->issue++;
+		return XDP_ABORTED;
+	}
+
+	return bpf_redirect_map(&cpu_map, cpu_dest, 0);
 }
 
 /* Load-Balance traffic based on hashing IP-addrs + L4-proto.  The

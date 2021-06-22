@@ -51,6 +51,7 @@ static const struct option long_options[] = {
 	{ "progname", required_argument, NULL, 'p' },
 	{ "qsize", required_argument, NULL, 'q' },
 	{ "cpu", required_argument, NULL, 'c' },
+	{ "cpu-all", no_argument, NULL, 'C' },
 	{ "stress-mode", no_argument, NULL, 'x' },
 	{ "force", no_argument, NULL, 'F' },
 	{ "interval", required_argument, NULL, 'i' },
@@ -451,6 +452,11 @@ int main(int argc, char **argv)
 				goto end_cpu;
 			}
 			cpu[added_cpus++] = add_cpu;
+			break;
+		case 'C':
+			for (i = 0; i < n_cpus; i++)
+				cpu[added_cpus++] = i;
+			add_cpu = i;
 			break;
 		case 'q':
 			qsize = strtoul(optarg, NULL, 0);
