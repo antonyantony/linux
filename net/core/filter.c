@@ -5745,6 +5745,58 @@ static const struct bpf_func_proto bpf_skb_get_xfrm_state_proto = {
 	.arg4_type	= ARG_CONST_SIZE,
 	.arg5_type	= ARG_ANYTHING,
 };
+
+BPF_CALL_5(bpf_xdp_get_xfrm_state_spi, struct xdp_buff *, ctx,
+	   struct bpf_xfrm_state *, p, struct bpf_xfrm_state *, to, u32, size, u64, flags)
+{
+	const struct xfrm_state *x;
+	struct net *net = dev_net(ctx->rxq->dev);
+	xfrm_address_t daddr = {};
+
+	if (p->family == AF_INET6) {
+		memcpy(daddr.a6, p->remote_ipv6, sizeof(p->remote_ipv6));
+	} else {
+		daddr.a4 = p->remote_ipv4;
+		memset(&p->remote_ipv6[1], 0, sizeof(__u32) * 3);
+	}
+
+	x = xfrm_state_lookup(net, 0, &daddr, p->spi, p->proto, p->family);
+	if (!x)
+		goto err_clear;
+
+	if (unlikely(size != sizeof(struct bpf_xfrm_state)))
+		goto err_clear;
+
+	to->reqid = x->props.reqid;
+	to->spi = x->id.spi;
+	to->family = x->props.family;
+	to->pcpu_num = x->pcpu_num;
+	to->ext = 0;
+
+	if (to->family == AF_INET6) {
+		memcpy(to->remote_ipv6, x->props.saddr.a6,
+		       sizeof(to->remote_ipv6));
+	} else {
+		to->remote_ipv4 = x->props.saddr.a4;
+		memset(&to->remote_ipv6[1], 0, sizeof(__u32) * 3);
+	}
+
+	return 0;
+err_clear:
+	memset(to, 0, size);
+	return -EINVAL;
+}
+
+static const struct bpf_func_proto bpf_xdp_get_xfrm_state_spi_proto = {
+	.func		= bpf_xdp_get_xfrm_state_spi,
+	.gpl_only	= false,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_PTR_TO_CTX,
+	.arg2_type	= ARG_ANYTHING,
+	.arg3_type	= ARG_PTR_TO_UNINIT_MEM,
+	.arg4_type	= ARG_CONST_SIZE,
+	.arg5_type	= ARG_ANYTHING,
+};
 #endif
 
 #if IS_ENABLED(CONFIG_INET) || IS_ENABLED(CONFIG_IPV6)
@@ -7967,6 +8019,8 @@ tc_cls_act_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 #ifdef CONFIG_XFRM
 	case BPF_FUNC_skb_get_xfrm_state:
 		return &bpf_skb_get_xfrm_state_proto;
+	case BPF_FUNC_xdp_get_xfrm_state_spi:
+		return &bpf_xdp_get_xfrm_state_spi_proto;
 #endif
 #ifdef CONFIG_CGROUP_NET_CLASSID
 	case BPF_FUNC_skb_cgroup_classid:
@@ -8070,6 +8124,10 @@ xdp_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 	case BPF_FUNC_tcp_raw_check_syncookie_ipv6:
 		return &bpf_tcp_raw_check_syncookie_ipv6_proto;
 #endif
+#endif
+#ifdef CONFIG_XFRM
+	case BPF_FUNC_xdp_get_xfrm_state_spi:
+		return &bpf_xdp_get_xfrm_state_spi_proto;
 #endif
 	default:
 		return bpf_sk_base_func_proto(func_id);
