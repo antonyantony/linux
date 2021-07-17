@@ -188,6 +188,11 @@ ifneq ($(words $(subst :, ,$(abs_srctree))), 1)
 $(error source directory cannot contain spaces or colons)
 endif
 
+ifndef makefile.local
+makefile.local  = true
+-include  $(abs_srctree)/Makefile.local
+endif
+
 ifneq ($(abs_srctree),$(abs_objtree))
 # Look for make include files relative to root of kernel src
 #
