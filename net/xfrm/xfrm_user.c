@@ -496,6 +496,7 @@ static void copy_from_user_state(struct xfrm_state *x, struct xfrm_usersa_info *
 	memcpy(&x->id, &p->id, sizeof(x->id));
 	memcpy(&x->sel, &p->sel, sizeof(x->sel));
 	memcpy(&x->lft, &p->lft, sizeof(x->lft));
+	memcpy(&x->curlft, &p->curlft, sizeof(x->curlft));
 	x->props.mode = p->mode;
 	x->props.replay_window = min_t(unsigned int, p->replay_window,
 					sizeof(x->replay.bitmap) * 8);
