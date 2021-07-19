@@ -504,6 +504,10 @@ static void copy_from_user_state(struct xfrm_state *x, struct xfrm_usersa_info *
 	x->props.family = p->family;
 	memcpy(&x->props.saddr, &p->saddr, sizeof(x->props.saddr));
 	x->props.flags = p->flags;
+	x->replay.seq = p->seq;
+	x->preplay.seq = p->seq;
+	x->replay.oseq = p->seq;
+	x->preplay.oseq = p->seq;
 
 	if (!x->sel.family && !(p->flags & XFRM_STATE_AF_UNSPEC))
 		x->sel.family = p->family;
