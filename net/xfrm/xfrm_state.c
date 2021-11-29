@@ -1772,6 +1772,13 @@ fail:
 }
 EXPORT_SYMBOL(xfrm_state_update);
 
+void xfrm_state_hard_expire(struct xfrm_state *x)
+{
+	x->km.state = XFRM_STATE_EXPIRED;
+	hrtimer_start(&x->mtimer, 0, HRTIMER_MODE_REL_SOFT);
+}
+EXPORT_SYMBOL(xfrm_state_hard_expire);
+
 int xfrm_state_check_expire(struct xfrm_state *x)
 {
 	if (!x->curlft.use_time)
@@ -1779,8 +1786,7 @@ int xfrm_state_check_expire(struct xfrm_state *x)
 
 	if (x->curlft.bytes >= x->lft.hard_byte_limit ||
 	    x->curlft.packets >= x->lft.hard_packet_limit) {
-		x->km.state = XFRM_STATE_EXPIRED;
-		hrtimer_start(&x->mtimer, 0, HRTIMER_MODE_REL_SOFT);
+		xfrm_state_hard_expire(x);
 		return -EINVAL;
 	}
 
