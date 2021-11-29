@@ -268,6 +268,13 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
 	if ((err = verify_replay(p, attrs)))
 		goto out;
 
+	if (!(p->flags & XFRM_STATE_ESN)) {
+		if(p->lft.soft_packet_limit > U32_MAX && p->lft.soft_packet_limit < XFRM_INF)
+			goto out;
+		if(p->lft.hard_packet_limit > U32_MAX && p->lft.hard_packet_limit < XFRM_INF)
+			goto out;
+	}
+
 	err = -EINVAL;
 	switch (p->mode) {
 	case XFRM_MODE_TRANSPORT:
