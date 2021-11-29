@@ -836,7 +836,7 @@ int esp6_input_done2(struct sk_buff *skb, int err)
 			xfrm_address_t ipaddr;
 
 			memcpy(&ipaddr.a6, &ip6h->saddr.s6_addr, sizeof(ipaddr.a6));
-			km_new_mapping(x, &ipaddr, source);
+			km_new_mapping_rate(x, &ipaddr, source);
 
 			/* XXX: perhaps add an extra
 			 * policy check here, to see

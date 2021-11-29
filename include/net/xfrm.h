@@ -232,6 +232,11 @@ struct xfrm_state {
 	u32			replay_maxage;
 	u32			replay_maxdiff;
 
+	/* mapping change rate limiting */
+	unsigned long new_mapping;	/* jiffies */
+	unsigned long mapping_maxage;	/* jiffies */
+	__be16 new_mapping_sport;
+
 	/* Replay detection notification timer */
 	struct timer_list	rtimer;
 
@@ -1685,7 +1690,7 @@ int xfrm_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 		 struct xfrm_encap_tmpl *encap);
 #endif
 
-int km_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, __be16 sport);
+int km_new_mapping_rate(struct xfrm_state *x, xfrm_address_t *ipaddr, __be16 sport);
 void km_policy_expired(struct xfrm_policy *pol, int dir, int hard, u32 portid);
 int km_report(struct net *net, u8 proto, struct xfrm_selector *sel,
 	      xfrm_address_t *addr);

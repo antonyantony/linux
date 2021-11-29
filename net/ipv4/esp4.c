@@ -796,7 +796,7 @@ int esp_input_done2(struct sk_buff *skb, int err)
 			xfrm_address_t ipaddr;
 
 			ipaddr.a4 = iph->saddr;
-			km_new_mapping(x, &ipaddr, source);
+			km_new_mapping_rate(x, &ipaddr, source);
 
 			/* XXX: perhaps add an extra
 			 * policy check here, to see
