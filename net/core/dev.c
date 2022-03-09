@@ -5308,8 +5308,8 @@ skip_taps:
 		if (!skb)
 			goto out;
 
-		if (nf_ingress(skb, &pt_prev, &ret, orig_dev) < 0)
-			goto out;
+//		if (nf_ingress(skb, &pt_prev, &ret, orig_dev) < 0)
+//			goto out;
 	}
 #endif
 	skb_reset_redirect(skb);
@@ -5649,6 +5649,8 @@ static void netif_receive_skb_list_internal(struct list_head *head)
 {
 	struct sk_buff *skb, *next;
 	struct list_head sublist;
+
+	nf_hook_ingress_list(head);
 
 	INIT_LIST_HEAD(&sublist);
 	list_for_each_entry_safe(skb, next, head, list) {

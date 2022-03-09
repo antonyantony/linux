@@ -324,8 +324,92 @@ static unsigned int nf_flow_queue_xmit(struct net *net, struct sk_buff *skb,
 	return NF_STOLEN;
 }
 
+int nft_bulk_receive_list(struct sk_buff *p, struct sk_buff *skb)
+{
+	NFT_BULK_CB(p)->last->next = skb;
+	NFT_BULK_CB(p)->last = skb;
+	NFT_BULK_CB(skb)->same_flow = 1;
+
+	return 0;
+}
+
+static void nft_bulk_receive(struct list_head *head, struct sk_buff *skb)
+{
+	const struct iphdr *iph;
+	struct sk_buff *p;
+	struct dst_entry *dst;
+	struct rtable *rt;
+	struct xfrm_state *x;
+	int proto;
+	__be32 daddr;
+
+	iph = ip_hdr(skb);
+	dst = skb_dst(skb);
+	/* dst must be present from the flowtable
+	if (!dst) {
+		goto out;
+	}
+	*/
+
+	rt = (struct rtable *)dst;
+	daddr = rt_nexthop(rt, iph->daddr);
+	x = dst_xfrm(dst);
+	proto = iph->protocol;
+
+	list_for_each_entry(p, head, list) {
+		struct dst_entry *dst2;
+		struct rtable *rt2;
+		struct iphdr *iph2;
+		__be32 daddr2;
+
+		if (!NFT_BULK_CB(p)->same_flow)
+			continue;
+
+		dst2 = skb_dst(p);
+		rt2 = (struct rtable *)dst2;
+		if (dst->dev != dst2->dev) {
+			NFT_BULK_CB(p)->same_flow = 0;
+			continue;
+		}
+
+		iph2 = ip_hdr(p);
+		daddr2 = rt_nexthop(rt2, iph2->daddr);
+		if (daddr != daddr2) {
+			NFT_BULK_CB(p)->same_flow = 0;
+			continue;
+		}
+
+		if (x != dst_xfrm(dst2)) {
+			NFT_BULK_CB(p)->same_flow = 0;
+			continue;
+		}
+
+		goto found;
+	}
+
+	goto out;
+
+found:
+	if (NFT_BULK_CB(p)->last == p)
+		skb_shinfo(p)->frag_list = skb;
+	else
+		NFT_BULK_CB(p)->last->next = skb;
+
+	NFT_BULK_CB(p)->last = skb;
+	NFT_BULK_CB(skb)->same_flow = 1;
+
+	return;
+out:
+	/* First skb */
+	NFT_BULK_CB(skb)->last = skb;
+	NFT_BULK_CB(skb)->same_flow = 1;
+	list_add_tail(&skb->list, head);
+
+	return;
+}
+
 unsigned int
-nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
+__nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 			const struct nf_hook_state *state)
 {
 	struct flow_offload_tuple_rhash *tuplehash;
@@ -333,39 +417,47 @@ nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 	struct flow_offload_tuple tuple = {};
 	enum flow_offload_tuple_dir dir;
 	struct flow_offload *flow;
-	struct net_device *outdev;
 	u32 hdrsize, offset = 0;
 	unsigned int thoff, mtu;
-	struct rtable *rt;
 	struct iphdr *iph;
-	__be32 nexthop;
-	int ret;
+	struct dst_entry *dst;
+
+	skb_reset_network_header(skb);
+	if (!skb_transport_header_was_set(skb))
+		skb_reset_transport_header(skb);
+	skb_reset_mac_len(skb);
 
 	if (skb->protocol != htons(ETH_P_IP) &&
 	    !nf_flow_skb_encap_protocol(skb, htons(ETH_P_IP), &offset))
-		return NF_ACCEPT;
+		return 0;
 
 	if (nf_flow_tuple_ip(skb, state->in, &tuple, &hdrsize, offset) < 0)
-		return NF_ACCEPT;
+		return 0;
 
 	tuplehash = flow_offload_lookup(flow_table, &tuple);
 	if (tuplehash == NULL)
-		return NF_ACCEPT;
+		return 0;
 
 	dir = tuplehash->tuple.dir;
 	flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
 
 	mtu = flow->tuplehash[dir].tuple.mtu + offset;
 	if (unlikely(nf_flow_exceeds_mtu(skb, mtu)))
-		return NF_ACCEPT;
+		return 0;
 
 	iph = (struct iphdr *)(skb_network_header(skb) + offset);
 	thoff = (iph->ihl * 4) + offset;
 	if (nf_flow_state_check(flow, iph->protocol, skb, thoff))
-		return NF_ACCEPT;
+		return 0;
 
 	if (skb_try_make_writable(skb, thoff + hdrsize))
-		return NF_DROP;
+		return -1;
+	
+	memset(skb->cb, 0, sizeof(struct nft_bulk_cb));
+	NFT_BULK_CB(skb)->tuplehash = tuplehash;
+
+	dst = tuplehash->tuple.dst_cache;
+	skb_dst_set_noref(skb, dst);
 
 	flow_offload_refresh(flow_table, flow);
 
@@ -380,6 +472,127 @@ nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 
 	if (flow_table->flags & NF_FLOWTABLE_COUNTER)
 		nf_ct_acct_update(flow->ct, tuplehash->tuple.dir, skb->len);
+
+	return 1;
+}
+
+unsigned int
+nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
+			const struct nf_hook_state *state)
+{
+	struct nf_flowtable *flow_table = priv;
+		struct net_device *outdev;
+	struct rtable *rt;
+	__be32 nexthop;
+	int ret, cpu;
+	struct sk_buff *skb, *n;
+	struct list_head bulk_list;
+	struct list_head acc_list;
+	struct list_head *bulk_head;
+	struct list_head *head = state->skb_list;
+
+	cpu = get_cpu();
+
+	INIT_LIST_HEAD(&bulk_list);
+	INIT_LIST_HEAD(&acc_list);
+
+	bulk_head = per_cpu_ptr(flow_table->bulk_list, cpu);
+
+	list_for_each_entry_safe(skb, n, head, list) {
+
+		skb_list_del_init(skb);
+		ret = __nf_flow_offload_ip_hook(priv, skb, state);
+		if (ret == 0)
+			list_add_tail(&skb->list, &acc_list);
+		else if (ret == 1)
+			list_add_tail(&skb->list, &bulk_list);
+		/* ret == -1: Packet dropped! */
+		else if (ret == -1)
+			kfree_skb(skb);
+
+	}
+
+	list_splice_init(&acc_list, head);
+
+	list_for_each_entry_safe(skb, n, &bulk_list, list) {
+		skb_list_del_init(skb);
+		nft_bulk_receive(bulk_head, skb);
+	}
+
+	list_for_each_entry_safe(skb, n, bulk_head, list) {
+
+		list_del_init(&skb->list);
+
+		skb->next = skb_shinfo(skb)->frag_list;
+		skb_shinfo(skb)->frag_list = NULL;
+
+		while (skb) {
+			struct flow_offload_tuple_rhash *tuplehash;
+			enum flow_offload_tuple_dir dir;
+			struct flow_offload *flow;
+			struct sk_buff *next;
+
+
+			next = skb->next;
+			skb_mark_not_on_list(skb);
+			tuplehash = NFT_BULK_CB(skb)->tuplehash;
+
+			switch (tuplehash->tuple.xmit_type) {
+			case FLOW_OFFLOAD_XMIT_NEIGH:
+				rt = (struct rtable *)skb_dst(skb);
+				outdev = rt->dst.dev;
+				skb->dev = outdev;
+				nexthop = rt_nexthop(rt, ip_hdr(skb)->saddr);
+				neigh_xmit(NEIGH_ARP_TABLE, outdev, &nexthop, skb);
+				break;
+			case FLOW_OFFLOAD_XMIT_DIRECT:
+				dir = tuplehash->tuple.dir;
+				flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
+				ret = nf_flow_queue_xmit(state->net, skb, tuplehash, ETH_P_IP);
+				if (ret == NF_DROP)
+					flow_offload_teardown(flow);
+				break;
+			case FLOW_OFFLOAD_XMIT_XFRM:
+				memset(skb->cb, 0, sizeof(struct inet_skb_parm));
+				IPCB(skb)->iif = skb->dev->ifindex;
+				IPCB(skb)->flags = IPSKB_FORWARDED;
+				nf_flow_xmit_xfrm(skb, state, skb_dst(skb));
+				break;
+			}
+
+			skb = next;
+		}
+	}
+
+	put_cpu();
+
+	BUG_ON(!list_empty(bulk_head));
+
+	/* XXX: What to return here? */
+	return NF_STOLEN;
+}
+EXPORT_SYMBOL_GPL(nf_flow_offload_ip_hook_list);
+
+
+unsigned int
+nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
+			const struct nf_hook_state *state)
+{
+	struct flow_offload_tuple_rhash *tuplehash;
+	enum flow_offload_tuple_dir dir;
+	struct flow_offload *flow;
+	struct net_device *outdev;
+	struct rtable *rt;
+	__be32 nexthop;
+	int ret;
+
+	ret = __nf_flow_offload_ip_hook(priv, skb, state);
+	if (ret == 0)
+		return NF_ACCEPT;	
+	else if (ret == -1)
+		return NF_DROP;	
+
+	tuplehash = NFT_BULK_CB(skb)->tuplehash;
 
 	if (unlikely(tuplehash->tuple.xmit_type == FLOW_OFFLOAD_XMIT_XFRM)) {
 		rt = (struct rtable *)tuplehash->tuple.dst_cache;
@@ -406,7 +619,7 @@ nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 		break;
 	}
 
-	return ret;
+	return NF_ACCEPT;
 }
 EXPORT_SYMBOL_GPL(nf_flow_offload_ip_hook);
 
