@@ -475,6 +475,19 @@ __nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 
 	return 1;
 }
+static void nf_flow_neigh_xmit_list(struct sk_buff *skb, struct net_device *outdev, const void *daddr)
+{
+	struct sk_buff *iter = skb;
+
+	while (iter) {
+		iter->dev = outdev;
+		dev_hard_header(iter, outdev, ETH_P_IP, daddr, NULL, iter->len);
+
+		iter = iter->next;
+	}
+
+	dev_queue_xmit(skb);
+}
 
 unsigned int
 nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
@@ -490,6 +503,8 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 	struct list_head acc_list;
 	struct list_head *bulk_head;
 	struct list_head *head = state->skb_list;
+	struct neighbour *neigh;
+
 
 	cpu = get_cpu();
 
@@ -526,12 +541,23 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 		skb->next = skb_shinfo(skb)->frag_list;
 		skb_shinfo(skb)->frag_list = NULL;
 
+		rt = (struct rtable *)skb_dst(skb);
+
+		/* XXX: We don't have a refcount for neigh! */
+		neigh = ip_neigh_gw4(rt->dst.dev, rt->rt_gw4);
+		if (!neigh) {
+			kfree_skb_list(skb);
+			continue;
+		}
+
+		nf_flow_neigh_xmit_list(skb, rt->dst.dev, neigh->ha);
+
+/*
 		while (skb) {
 			struct flow_offload_tuple_rhash *tuplehash;
 			enum flow_offload_tuple_dir dir;
 			struct flow_offload *flow;
 			struct sk_buff *next;
-
 
 			next = skb->next;
 			skb_mark_not_on_list(skb);
@@ -562,6 +588,7 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 
 			skb = next;
 		}
+*/
 	}
 
 	put_cpu();
