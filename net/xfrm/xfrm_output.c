@@ -56,6 +56,15 @@ static struct dst_entry *skb_dst_pop(struct sk_buff *skb)
 	return child;
 }
 
+static struct dst_entry *skb_dst_pop_noref(struct sk_buff *skb)
+{
+	struct dst_entry *child = xfrm_dst_child(skb_dst(skb));
+
+	skb_dst_drop(skb);
+	return child;
+}
+
+
 /* Add encapsulation header.
  *
  * The IP header will be moved forward to make space for the encapsulation
@@ -531,21 +540,22 @@ static int xfrm_output_one(struct sk_buff *skb, int err)
 			goto error;
 		}
 
+		/* FIXME: Only first packet counted on nft bulk! */
 		x->curlft.bytes += skb->len;
 		x->curlft.packets++;
 
 		spin_unlock_bh(&x->lock);
 
-		skb_dst_force(skb);
-		if (!skb_dst(skb)) {
-			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
-			err = -EHOSTUNREACH;
-			goto error_nolock;
-		}
-
 		if (xfrm_offload(skb)) {
 			x->type_offload->encap(x, skb);
 		} else {
+			skb_dst_force(skb);
+			if (!skb_dst(skb)) {
+				XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
+				err = -EHOSTUNREACH;
+				goto error_nolock;
+			}
+
 			/* Inner headers are invalid now. */
 			skb->encapsulation = 0;
 
@@ -764,6 +774,168 @@ out:
 	return xfrm_output2(net, sk, skb);
 }
 EXPORT_SYMBOL_GPL(xfrm_output);
+
+int xfrm_output_fast(struct sk_buff *skb)
+{
+	struct net *net = dev_net(skb_dst(skb)->dev);
+	struct xfrm_state *x = skb_dst(skb)->xfrm;
+	struct dst_entry *dst;
+	struct sec_path *sp;
+	struct sk_buff *iter;
+	int err;
+
+	if (!xfrm_dev_offload_ok(skb, x) || skb_is_gso(skb))
+		return 1;
+/*
+	secpath_reset(skb);
+
+	sp = secpath_set(skb);
+	if (!sp) {
+		XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
+		kfree_skb_list(skb);
+		return -ENOMEM;
+	}
+
+	sp->olen++;
+	sp->xvec[sp->len++] = x;
+	xfrm_state_hold(x);
+
+	if (skb->encapsulation)
+		xfrm_get_inner_ipproto(skb);
+	skb->encapsulation = 1;
+*/
+
+	/* XXX: Called in the RX path with BHs disabled. */
+	spin_lock(&x->lock);
+
+	if (unlikely(x->km.state != XFRM_STATE_VALID)) {
+		XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTSTATEINVALID);
+		err = -EINVAL;
+		goto error;
+	}
+
+	err = xfrm_state_check_expire(x);
+	if (err) {
+		XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTSTATEEXPIRED);
+		goto error;
+	}
+
+	iter = skb;
+
+	/* FIXME: This loop is not save against removal of skb! */
+	while (iter) {
+		struct sk_buff *next;
+
+		next =iter->next;
+		iter->next = NULL;
+
+		switch (x->outer_mode.family) {
+		case AF_INET:
+			memset(IPCB(iter), 0, sizeof(*IPCB(iter)));
+			IPCB(iter)->flags |= IPSKB_XFRM_TRANSFORMED;
+			break;
+		case AF_INET6:
+			memset(IP6CB(iter), 0, sizeof(*IP6CB(iter)));
+			IP6CB(iter)->flags |= IP6SKB_XFRM_TRANSFORMED;
+			break;
+		}
+
+		secpath_reset(iter);
+
+		sp = secpath_set(iter);
+		if (!sp) {
+			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
+			kfree_skb(iter);
+			iter = next;
+			continue;
+		}
+
+		sp->olen++;
+		sp->xvec[sp->len++] = x;
+		xfrm_state_hold(x);
+
+		if (iter->encapsulation)
+			xfrm_get_inner_ipproto(iter);
+		iter->encapsulation = 1;
+
+
+		if (iter->ip_summed == CHECKSUM_PARTIAL) {
+			err = skb_checksum_help(iter);
+			if (err) {
+				XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
+				kfree_skb(iter);
+				iter = next;
+				continue;
+			}
+		}
+
+		err = xfrm_skb_check_space(iter);
+		if (err) {
+			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
+			kfree_skb(iter);
+			iter = next;
+			continue;
+		}
+
+		iter->mark = xfrm_smark_get(iter->mark, x);
+
+		err = xfrm_outer_mode_output(x, iter);
+		if (err) {
+			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTSTATEMODEERROR);
+			kfree_skb(iter);
+			iter = next;
+			continue;
+		}
+
+		err = xfrm_replay_overflow(x, iter);
+		if (err) {
+			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTSTATESEQERROR);
+			kfree_skb(iter);
+			iter = next;
+			continue;
+		}
+
+		dst = skb_dst_pop_noref(iter);
+		if (!dst) {
+			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
+			kfree_skb(iter);
+			iter = next;
+			continue;
+		}
+		skb_dst_set_noref(iter, dst);
+
+
+		/* XXX: Lock? */
+		x->curlft.bytes += iter->len;
+		x->curlft.packets++;
+
+//		skb_dst_drop(iter);
+		iter->next = next;
+		iter = next;
+	}
+
+	spin_unlock(&x->lock);
+
+
+	x->type_offload->encap(x, skb);
+/*
+	dst = dst_clone(xfrm_dst_child(dst));
+	if (!dst) {
+		XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
+		err = -EHOSTUNREACH;
+		goto error_nolock;
+	}
+	skb_dst_set(skb, dst);
+*/
+	return 0;
+error:
+	spin_unlock_bh(&x->lock);
+error_nolock:
+	kfree_skb_list(skb);
+	return err;
+}
+EXPORT_SYMBOL_GPL(xfrm_output_fast);
+
 
 static int xfrm4_tunnel_check_size(struct sk_buff *skb)
 {

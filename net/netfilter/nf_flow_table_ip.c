@@ -14,6 +14,8 @@
 #include <net/neighbour.h>
 #include <net/netfilter/nf_flow_table.h>
 #include <net/netfilter/nf_conntrack_acct.h>
+#include <net/xfrm.h>
+#include <net/pkt_sched.h>
 /* For layer 4 checksum field offset. */
 #include <linux/tcp.h>
 #include <linux/udp.h>
@@ -457,18 +459,203 @@ __nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 
 	return 1;
 }
+
+static int nft_qdisc_enqueue(struct sk_buff *skb, struct Qdisc *q,
+			     struct netdev_queue *txq)
+{
+	int rc;
+
+
+	/* FIXME: Handle rc! */
+	while (skb) {
+		struct sk_buff *to_free = NULL;
+		struct sk_buff *next = skb->next;
+		skb->next = NULL;
+
+		qdisc_pkt_len_init(skb);
+		qdisc_calculate_pkt_len(skb, q);
+		rc = q->enqueue(skb, q, &to_free) & NET_XMIT_MASK;
+
+		/* FIXME: Build a list for to_free skbs and free them after the loop! */
+		if (unlikely(to_free))
+			kfree_skb_list(to_free);
+		
+		skb = next;
+	}
+
+	return NET_XMIT_SUCCESS;
+}
+
+static inline int nft_dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
+				 struct net_device *dev,
+				 struct netdev_queue *txq)
+{
+	int rc;
+
+	/* FIXME: Handle rc! */
+	if (q->flags & TCQ_F_NOLOCK) {
+		if (q->flags & TCQ_F_CAN_BYPASS && nolock_qdisc_is_empty(q) &&
+		    qdisc_run_begin(q)) {
+			/* Retest nolock_qdisc_is_empty() within the protection
+			 * of q->seqlock to protect from racing with requeuing.
+			 */
+			if (unlikely(!nolock_qdisc_is_empty(q))) {
+				rc = nft_qdisc_enqueue(skb, q, txq);
+				__qdisc_run(q);
+				qdisc_run_end(q);
+
+				return NET_XMIT_SUCCESS;
+			}
+
+			if (sch_direct_xmit(skb, q, dev, txq, NULL, true) &&
+			    !nolock_qdisc_is_empty(q))
+				__qdisc_run(q);
+
+			qdisc_run_end(q);
+			return NET_XMIT_SUCCESS;
+		}
+
+		rc = nft_qdisc_enqueue(skb, q, txq);
+		qdisc_run(q);
+
+	}
+
+	return rc;
+}
+
+static int nft_dev_queue_xmit(struct sk_buff *skb)
+{
+	struct net_device *dev = skb->dev;
+	struct netdev_queue *txq;
+	struct Qdisc *q;
+	int rc = -ENOMEM;
+//	bool again = false;
+
+	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_SCHED_TSTAMP))
+		return -1;
+
+	/* Disable soft irqs for various locks below. Also
+	 * stops preemption for RCU.
+	 */
+	rcu_read_lock_bh();
+
+//# ifdef CONFIG_NET_EGRESS
+//	if (static_branch_unlikely(&egress_needed_key))
+//		return -1;
+//# endif
+	/* If device/qdisc don't need skb->dst, release it right now while
+	 * its hot in this cpu cache.
+	 */
+	if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
+		skb_dst_drop(skb);
+	else
+		skb_dst_force(skb);
+
+	txq = netdev_core_pick_tx(dev, skb, NULL);
+	q = rcu_dereference_bh(txq->qdisc);
+
+	/* FIXME: Handle rc! */
+	if (q->enqueue) {
+		rc = nft_dev_xmit_skb(skb, q, dev, txq);
+		goto out;
+	}
+
+	/* FIXME: Software devices are not yet handled! */
+
+	/* The device has no queue. Common case for software devices:
+	 * loopback, all the sorts of tunnels...
+
+	 * Really, it is unlikely that netif_tx_lock protection is necessary
+	 * here.  (f.e. loopback and IP tunnels are clean ignoring statistics
+	 * counters.)
+	 * However, it is possible, that they rely on protection
+	 * made by us here.
+
+	 * Check this and shot the lock. It is not prone from deadlocks.
+	 *Either shot noqueue qdisc, it is even simpler 8)
+	 */
+	
+	/*
+	if (dev->flags & IFF_UP) {
+		int cpu = smp_processor_id();
+
+		if (txq->xmit_lock_owner != cpu) {
+			if (dev_xmit_recursion())
+				goto recursion_alert;
+
+			skb = validate_xmit_skb(skb, dev, &again);
+			if (!skb)
+				goto out;
+
+			PRANDOM_ADD_NOISE(skb, dev, txq, jiffies);
+			HARD_TX_LOCK(dev, txq, cpu);
+
+			if (!netif_xmit_stopped(txq)) {
+				dev_xmit_recursion_inc();
+				skb = dev_hard_start_xmit(skb, dev, txq, &rc);
+				dev_xmit_recursion_dec();
+				if (dev_xmit_complete(rc)) {
+					HARD_TX_UNLOCK(dev, txq);
+					goto out;
+				}
+			}
+			HARD_TX_UNLOCK(dev, txq);
+			net_crit_ratelimited("Virtual device %s asks to queue packet!\n",
+					     dev->name);
+		} else {
+recursion_alert:
+			net_crit_ratelimited("Dead loop on virtual device %s, fix it urgently!\n",
+					     dev->name);
+		}
+	}
+
+	rc = -ENETDOWN;
+	rcu_read_unlock_bh();
+
+	return rc;
+	*/
+out:
+	rcu_read_unlock_bh();
+	return NET_XMIT_SUCCESS;
+}
+
+
 static void nf_flow_neigh_xmit_list(struct sk_buff *skb, struct net_device *outdev, const void *daddr)
 {
-	struct sk_buff *iter = skb;
+	struct sk_buff *iter = skb->next;
+	int hlen;
+	struct ethhdr *eth;
+
+	skb->dev = outdev;
+	hlen = dev_hard_header(skb, outdev, ETH_P_IP, daddr, NULL, skb->len);
+	if (hlen < 0) {
+		kfree_skb_list(skb);
+		return;
+	}
+
+	skb_reset_mac_header(skb);
 
 	while (iter) {
 		iter->dev = outdev;
-		dev_hard_header(iter, outdev, ETH_P_IP, daddr, NULL, iter->len);
-
+		skb_push(iter, hlen);
+		skb_copy_to_linear_data(iter, skb->data, hlen);
+		skb_reset_mac_header(iter);
 		iter = iter->next;
 	}
 
-	dev_queue_xmit(skb);
+
+	if (!nft_dev_queue_xmit(skb))
+		return;
+
+	while (skb) {
+		struct sk_buff *next;
+		eth = (struct ethhdr *)skb->data;
+
+		next = skb->next;
+		skb->next = NULL;
+		dev_queue_xmit(skb);
+		skb = next;
+	}
 }
 
 unsigned int
@@ -476,9 +663,7 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 			const struct nf_hook_state *state)
 {
 	struct nf_flowtable *flow_table = priv;
-		struct net_device *outdev;
 	struct rtable *rt;
-	__be32 nexthop;
 	int ret, cpu;
 	struct sk_buff *skb, *n;
 	struct list_head bulk_list;
@@ -523,10 +708,19 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 		skb->next = skb_shinfo(skb)->frag_list;
 		skb_shinfo(skb)->frag_list = NULL;
 
+		if (skb_dst(skb)->xfrm) {
+			ret = xfrm_output_fast(skb);
+			if (ret) {
+				if (ret == 1)
+					kfree_skb_list(skb);
+				continue;
+			}
+		}
+
 		rt = (struct rtable *)skb_dst(skb);
 
-		/* XXX: We don't have a refcount for neigh! */
-		neigh = ip_neigh_gw4(rt->dst.dev, rt->rt_gw4);
+		/* FIXME: Move out of the loop! */
+		neigh = ip_neigh_gw4(rt->dst.dev, rt_nexthop(rt, ip_hdr(skb)->daddr));
 		if (!neigh) {
 			kfree_skb_list(skb);
 			continue;
@@ -576,6 +770,9 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 	put_cpu();
 
 	BUG_ON(!list_empty(bulk_head));
+
+	if (!list_empty(head))
+		return NF_ACCEPT;
 
 	/* XXX: What to return here? */
 	return NF_STOLEN;
