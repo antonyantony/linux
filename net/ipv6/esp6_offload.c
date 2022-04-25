@@ -120,24 +120,28 @@ static void esp6_gso_encap(struct xfrm_state *x, struct sk_buff *skb)
 {
 	struct ip_esp_hdr *esph;
 	struct ipv6hdr *iph = ipv6_hdr(skb);
-	struct xfrm_offload *xo = xfrm_offload(skb);
+	struct xfrm_offload *xo;
 	u8 proto = iph->nexthdr;
-
-	skb_push(skb, -skb_network_offset(skb));
+	struct sk_buff *iter = skb;
 
 	if (x->outer_mode.encap == XFRM_MODE_TRANSPORT) {
 		__be16 frag;
 
 		ipv6_skip_exthdr(skb, sizeof(struct ipv6hdr), &proto, &frag);
 	}
+	while (iter) {
+		xo = xfrm_offload(iter);
+		xo->proto = proto;
+		skb_push(iter, -skb_network_offset(iter));
+		esph = ip_esp_hdr(iter);
+		*skb_mac_header(iter) = IPPROTO_ESP;
 
-	esph = ip_esp_hdr(skb);
-	*skb_mac_header(skb) = IPPROTO_ESP;
+		esph->spi = x->id.spi;
+		esph->seq_no = htonl(XFRM_SKB_CB(iter)->seq.output.low);
+		//              seq++;
 
-	esph->spi = x->id.spi;
-	esph->seq_no = htonl(XFRM_SKB_CB(skb)->seq.output.low);
-
-	xo->proto = proto;
+		iter = iter->next;
+	}
 }
 
 static struct sk_buff *xfrm6_tunnel_gso_segment(struct xfrm_state *x,
