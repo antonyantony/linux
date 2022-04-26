@@ -256,8 +256,9 @@ static int nft_flow_route(const struct nft_pktinfo *pkt,
 
 static bool nft_flow_offload_skip(struct sk_buff *skb, int family)
 {
-	if (skb_sec_path(skb))
-		return true;
+	/* FIXME: */
+//	if (skb_sec_path(skb))
+//		return true;
 
 	if (family == NFPROTO_IPV4) {
 		const struct ip_options *opt;
