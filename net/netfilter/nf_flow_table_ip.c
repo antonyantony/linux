@@ -671,6 +671,7 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 	struct list_head *bulk_head;
 	struct list_head *head = state->skb_list;
 	struct neighbour *neigh;
+	bool is_v6gw = false;
 
 
 	cpu = get_cpu();
@@ -720,7 +721,8 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 		rt = (struct rtable *)skb_dst(skb);
 
 		/* FIXME: Move out of the loop! */
-		neigh = ip_neigh_gw4(rt->dst.dev, rt_nexthop(rt, ip_hdr(skb)->daddr));
+		neigh = ip_neigh_for_gw(rt, skb, &is_v6gw);
+		// neigh = ip_neigh_gw4(rt->dst.dev, rt_nexthop(rt, ip_hdr(skb)->daddr));
 		if (!neigh) {
 			kfree_skb_list(skb);
 			continue;
