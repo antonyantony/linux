@@ -18,6 +18,7 @@
 #include <net/netfilter/nf_conntrack_acct.h>
 #include <net/xfrm.h>
 #include <net/pkt_sched.h>
+#include <net/esp.h>
 /* For layer 4 checksum field offset. */
 #include <linux/tcp.h>
 #include <linux/udp.h>
@@ -176,7 +177,7 @@ static int nf_flow_tuple_ip(struct sk_buff *skb, const struct net_device *dev,
 	struct iphdr *iph;
 
 	if (!pskb_may_pull(skb, sizeof(*iph) + offset))
-		return -1;
+		return 0;
 
 	iph = (struct iphdr *)(skb_network_header(skb) + offset);
 	thoff = (iph->ihl * 4);
@@ -194,15 +195,25 @@ static int nf_flow_tuple_ip(struct sk_buff *skb, const struct net_device *dev,
 	case IPPROTO_UDP:
 		*hdrsize = sizeof(struct udphdr);
 		break;
+	case IPPROTO_ESP:
+		*hdrsize = sizeof(struct ip_esp_hdr);
+		break;
 	default:
-		return -1;
+		return 0;
 	}
 
 	if (iph->ttl <= 1)
-		return -1;
+		return 0;
 
 	if (!pskb_may_pull(skb, thoff + *hdrsize))
-		return -1;
+		return 0;
+
+	if ((iph->protocol == IPPROTO_ESP)) {
+		skb_pull(skb, offset);
+		skb_reset_network_header(skb);
+		skb_set_transport_header(skb, thoff);
+		return 2;
+	}
 
 	iph = (struct iphdr *)(skb_network_header(skb) + offset);
 	ports = (struct flow_ports *)(skb_network_header(skb) + thoff);
@@ -216,7 +227,7 @@ static int nf_flow_tuple_ip(struct sk_buff *skb, const struct net_device *dev,
 	tuple->iifidx		= dev->ifindex;
 	nf_flow_tuple_encap(skb, tuple);
 
-	return 0;
+	return 1;
 }
 
 /* Based on ip_exceeds_mtu(). */
@@ -326,14 +337,88 @@ static unsigned int nf_flow_queue_xmit(struct net *net, struct sk_buff *skb,
 	return NF_STOLEN;
 }
 
+/*
 int nft_bulk_receive_list(struct sk_buff *p, struct sk_buff *skb)
 {
 	NFT_BULK_CB(p)->last->next = skb;
 	NFT_BULK_CB(p)->last = skb;
-	NFT_BULK_CB(skb)->same_flow = 1;
 
 	return 0;
 }
+*/
+
+static int nft_esp_bulk_receive(struct list_head *head, struct sk_buff *skb)
+{
+	const struct iphdr *iph;
+	struct sk_buff *p;
+	struct xfrm_state *x;
+	struct sec_path *sp;
+	__be32 daddr;
+	__be32 spi;
+
+	if (xfrm_offload(skb))
+		return -EINVAL;
+
+	iph = ip_hdr(skb);
+	daddr = iph->daddr;
+
+	BUG_ON(iph->protocol != IPPROTO_ESP);
+
+	spi = ip_esp_hdr(skb)->spi;
+
+	XFRM_SPI_SKB_CB(skb)->family = AF_INET;
+	XFRM_SPI_SKB_CB(skb)->daddroff = offsetof(struct iphdr, daddr);
+	XFRM_SPI_SKB_CB(skb)->seq = ip_esp_hdr(skb)->seq_no;
+	XFRM_SPI_SKB_CB(skb)->spi = spi;
+
+	list_for_each_entry(p, head, list) {
+
+		if (daddr != ip_hdr(p)->daddr) {
+			continue;
+		}
+
+		if (spi != ip_esp_hdr(p)->spi) {
+			continue;
+		}
+
+		goto found;
+	}
+
+	goto out;
+
+found:
+	if (NFT_BULK_CB(p)->last == p)
+		skb_shinfo(p)->frag_list = skb;
+	else
+		NFT_BULK_CB(p)->last->next = skb;
+
+	NFT_BULK_CB(p)->last = skb;
+	skb_pull(skb, sizeof(*iph));
+	/* XXX: Copy or alloc new one? */
+	__skb_ext_copy(skb, p);
+
+	return 0;
+out:
+	/* First skb */
+	NFT_BULK_CB(skb)->last = skb;
+	list_add_tail(&skb->list, head);
+
+	x = xfrm_state_lookup(dev_net(skb->dev), skb->mark,
+			(xfrm_address_t *)&daddr,
+			spi, IPPROTO_ESP, AF_INET);
+	if (!x)
+		return -ENOENT;
+
+	sp = secpath_set(skb);
+	if (!sp)
+		return -ENOMEM;
+
+	sp->xvec[sp->len++] = x;
+	skb_pull(skb, sizeof(*iph));
+
+	return 0;
+}
+
 
 static void nft_bulk_receive(struct list_head *head, struct sk_buff *skb)
 {
@@ -364,25 +449,19 @@ static void nft_bulk_receive(struct list_head *head, struct sk_buff *skb)
 		struct iphdr *iph2;
 		__be32 daddr2;
 
-		if (!NFT_BULK_CB(p)->same_flow)
-			continue;
-
 		dst2 = skb_dst(p);
 		rt2 = (struct rtable *)dst2;
 		if (dst->dev != dst2->dev) {
-			NFT_BULK_CB(p)->same_flow = 0;
 			continue;
 		}
 
 		iph2 = ip_hdr(p);
 		daddr2 = rt_nexthop(rt2, iph2->daddr);
 		if (daddr != daddr2) {
-			NFT_BULK_CB(p)->same_flow = 0;
 			continue;
 		}
 
 		if (x != dst_xfrm(dst2)) {
-			NFT_BULK_CB(p)->same_flow = 0;
 			continue;
 		}
 
@@ -398,13 +477,11 @@ found:
 		NFT_BULK_CB(p)->last->next = skb;
 
 	NFT_BULK_CB(p)->last = skb;
-	NFT_BULK_CB(skb)->same_flow = 1;
 
 	return;
 out:
 	/* First skb */
 	NFT_BULK_CB(skb)->last = skb;
-	NFT_BULK_CB(skb)->same_flow = 1;
 	list_add_tail(&skb->list, head);
 
 	return;
@@ -423,6 +500,7 @@ __nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 	unsigned int thoff, mtu;
 	struct iphdr *iph;
 	struct dst_entry *dst;
+	int ret;
 
 	skb_reset_network_header(skb);
 	if (!skb_transport_header_was_set(skb))
@@ -433,8 +511,9 @@ __nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 	    !nf_flow_skb_encap_protocol(skb, htons(ETH_P_IP), &offset))
 		return 0;
 
-	if (nf_flow_tuple_ip(skb, state->in, &tuple, &hdrsize, offset) < 0)
-		return 0;
+	ret = nf_flow_tuple_ip(skb, state->in, &tuple, &hdrsize, offset);
+	if (ret != 1)
+		return ret;
 
 	tuplehash = flow_offload_lookup(flow_table, &tuple);
 	if (tuplehash == NULL)
@@ -686,6 +765,7 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 	struct sk_buff *skb, *n;
 	struct list_head bulk_list;
 	struct list_head acc_list;
+	struct list_head esp_list;
 	struct list_head *bulk_head;
 	struct list_head *head = state->skb_list;
 	struct neighbour *neigh;
@@ -695,6 +775,7 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 
 	INIT_LIST_HEAD(&bulk_list);
 	INIT_LIST_HEAD(&acc_list);
+	INIT_LIST_HEAD(&esp_list);
 
 	bulk_head = per_cpu_ptr(flow_table->bulk_list, cpu);
 
@@ -706,11 +787,38 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 			list_add_tail(&skb->list, &acc_list);
 		else if (ret == 1)
 			list_add_tail(&skb->list, &bulk_list);
+		else if (ret == 2)
+			list_add_tail(&skb->list, &esp_list);
 		/* ret == -1: Packet dropped! */
 		else if (ret == -1)
 			kfree_skb(skb);
 
 	}
+
+	list_for_each_entry_safe(skb, n, &esp_list, list) {
+		skb_list_del_init(skb);
+		memset(skb->cb, 0, sizeof(struct nft_bulk_cb));
+		ret = nft_esp_bulk_receive(bulk_head, skb);
+		if (ret)
+			list_add_tail(&skb->list, &acc_list);
+	}
+
+	list_for_each_entry_safe(skb, n, bulk_head, list) {
+
+		list_del_init(&skb->list);
+
+		skb->next = skb_shinfo(skb)->frag_list;
+		skb_shinfo(skb)->frag_list = NULL;
+
+		ret = xfrm_input_list(&skb, IPPROTO_ESP, 0, -2);
+//		if (ret) {
+//			if (ret == 1)
+//				kfree_skb_list(skb);
+//			continue;
+//		}
+	}
+
+	/*XXX: fwd policy check */
 
 	list_splice_init(&acc_list, head);
 

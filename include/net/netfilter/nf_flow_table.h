@@ -17,17 +17,13 @@ struct flow_offload;
 enum flow_offload_tuple_dir;
 
 struct nft_bulk_cb {
-	/* This is non-zero if the packet cannot be merged with the new skb. */
-	u16	flush;
-
-	/* Used in ipv6_gro_receive() and foo-over-udp */
-	u16	proto;
-
-	/* This is non-zero if the packet may be of the same flow. */
-	u8	same_flow:1;
-
 	struct sk_buff *last;
 	struct flow_offload_tuple_rhash *tuplehash;
+
+	/* This is non-zero if the packet may be of the same flow. */
+//	u8	same_flow:1;
+
+
 };
 
 #define NFT_BULK_CB(skb) ((struct nft_bulk_cb *)(skb)->cb)
