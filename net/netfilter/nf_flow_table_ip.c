@@ -957,6 +957,7 @@ static int nf_flow_tuple_ipv6(struct sk_buff *skb, const struct net_device *dev,
 		*hdrsize = sizeof(struct udphdr);
 		break;
 	default:
+		printk_ratelimited(KERN_ALERT "DEBUG: %s %d no tuple match nexthdr %d dev->name %s saddr %pI6c daddr %pI6c", __func__, __LINE__, ip6h->nexthdr, dev->name, &ip6h->saddr, &ip6h->daddr);
 		return -1;
 	}
 
@@ -1065,3 +1066,165 @@ nf_flow_offload_ipv6_hook(void *priv, struct sk_buff *skb,
 	return ret;
 }
 EXPORT_SYMBOL_GPL(nf_flow_offload_ipv6_hook);
+
+unsigned int
+nf_flow_offload_ipv6_hook_list(void *priv, struct sk_buff *unused,
+			   const struct nf_hook_state *state)
+{
+	struct flow_offload_tuple_rhash *tuplehash;
+	struct nf_flowtable *flow_table = priv;
+	struct flow_offload_tuple tuple = {};
+	enum flow_offload_tuple_dir dir;
+	// const struct in6_addr *nexthop;
+	struct flow_offload *flow;
+	// struct net_device *outdev;
+	unsigned int thoff, mtu;
+	u32 hdrsize, offset = 0;
+	struct ipv6hdr *ip6h;
+	struct rtable *rt;
+	int ret, cpu;
+	struct list_head bulk_list;
+	struct list_head acc_list;
+	struct list_head *bulk_head;
+	struct list_head *head = state->skb_list;
+	struct neighbour *neigh;
+	struct sk_buff *skb, *n;
+	int nAll = 0;
+	int nBulk = 0;
+	int nDrop = 0;
+	int nAccept = 0;
+
+
+	cpu = get_cpu();
+
+	INIT_LIST_HEAD(&bulk_list);
+	INIT_LIST_HEAD(&acc_list);
+
+        bulk_head = per_cpu_ptr(flow_table->bulk_list, cpu);
+
+	list_for_each_entry_safe(skb, n, head, list) {
+		nAll++;
+
+		if (nAll > 4)
+			printk_ratelimited(KERN_ALERT "DEBUG: %s %d no tuple match dst_port %u src_port %u", __func__, __LINE__, tuple.dst_port,  tuple.src_port);
+
+		skb_list_del_init(skb);
+
+		if (skb->protocol != htons(ETH_P_IPV6) &&
+		    !nf_flow_skb_encap_protocol(skb, htons(ETH_P_IPV6), &offset)){
+			list_add_tail(&skb->list, &acc_list);
+			nAccept++;
+			printk_ratelimited(KERN_ALERT "DEBUG: NF_ACCEPTED %s %d list_empty %s Bulk %d NF_ACCEPT %d NF_DROP %d Total %d", __func__, __LINE__, !list_empty(head) ? "no" : "yes", nBulk, nAccept, nDrop, nAll);
+			continue;
+		}
+
+		if (nf_flow_tuple_ipv6(skb, state->in, &tuple, &hdrsize, offset) < 0) {
+			list_add_tail(&skb->list, &acc_list);
+			nAccept++;
+			printk_ratelimited(KERN_ALERT "DEBUG: NF_ACCEPTED %s %d list_empty %s Bulk %d NF_ACCEPT %d NF_DROP %d Total %d", __func__, __LINE__, !list_empty(head) ? "no" : "yes", nBulk, nAccept, nDrop, nAll);
+			continue;
+		}
+
+		tuplehash = flow_offload_lookup(flow_table, &tuple);
+		if (tuplehash == NULL) {
+			list_add_tail(&skb->list, &acc_list);
+			nAccept++;
+			printk_ratelimited(KERN_ALERT "DEBUG: NF_ACCEPTED %s %d list_empty %s Bulk %d NF_ACCEPT %d NF_DROP %d Total %d", __func__, __LINE__, !list_empty(head) ? "no" : "yes", nBulk, nAccept, nDrop, nAll);
+			continue;
+		}
+
+		dir = tuplehash->tuple.dir;
+		flow = container_of(tuplehash, struct flow_offload, tuplehash[dir]);
+		if (flow == NULL) {
+			// can this happen?
+			list_add_tail(&skb->list, &acc_list);
+			nAccept++;
+			printk_ratelimited(KERN_ALERT "DEBUG: NF_ACCEPTED %s %d list_empty %s Bulk %d NF_ACCEPT %d NF_DROP %d Total %d", __func__, __LINE__, !list_empty(head) ? "no" : "yes", nBulk, nAccept, nDrop, nAll);
+			continue;
+		}
+
+		mtu = flow->tuplehash[dir].tuple.mtu + offset;
+
+		if(tuple.dst_port == 5001 || ntohs(tuple.dst_port) == 5001)
+			printk_ratelimited(KERN_ALERT "DEBUG: %s %d no tuple match dst_port %u src_port %u", __func__, __LINE__, tuple.dst_port,  tuple.src_port); 
+
+		if (unlikely(nf_flow_exceeds_mtu(skb, mtu))) {
+			list_add_tail(&skb->list, &acc_list);
+			nAccept++;
+			printk_ratelimited(KERN_ALERT "DEBUG: NF_ACCEPTED %s %d list_empty %s Bulk %d NF_ACCEPT %d NF_DROP %d Total %d", __func__, __LINE__, !list_empty(head) ? "no" : "yes", nBulk, nAccept, nDrop, nAll);
+			continue;
+		}
+
+		ip6h = (struct ipv6hdr *)(skb_network_header(skb) + offset);
+		thoff = sizeof(*ip6h) + offset;
+		if (nf_flow_state_check(flow, ip6h->nexthdr, skb, thoff)) {
+			kfree_skb(skb);
+			nDrop++;
+			continue;
+		}
+
+		if (skb_try_make_writable(skb, thoff + hdrsize)) {
+			kfree_skb(skb);
+			nDrop++;
+			continue;
+		}
+
+		flow_offload_refresh(flow_table, flow);
+
+		nf_flow_encap_pop(skb, tuplehash);
+		ip6h = ipv6_hdr(skb);
+
+		nf_flow_nat_ipv6(flow, skb, dir, ip6h);
+
+		ip6h->hop_limit--;
+		skb->tstamp = 0;
+
+		nBulk++;
+		list_add_tail(&skb->list, &bulk_list);
+	}
+
+	list_splice_init(&acc_list, head);
+
+	list_for_each_entry_safe(skb, n, &bulk_list, list) {
+                skb_list_del_init(skb);
+                nft_bulk_receive(bulk_head, skb);
+        }
+
+
+	list_for_each_entry_safe(skb, n, bulk_head, list) {
+		list_del_init(&skb->list);
+
+		if (flow_table->flags & NF_FLOWTABLE_COUNTER)
+			nf_ct_acct_update(flow->ct, tuplehash->tuple.dir, skb->len);
+
+		if (skb_dst(skb)->xfrm) {
+			ret = xfrm_output_fast(skb);
+			if (ret) {
+				if (ret == 1)
+					kfree_skb_list(skb);
+				continue;
+			}
+		}
+
+		neigh = ip_neigh_gw6(rt->dst.dev, &rt->rt_gw6);
+
+		if (!neigh) {
+                        kfree_skb_list(skb);
+                        continue;
+                }
+
+	        nf_flow_neigh_xmit_list(skb, rt->dst.dev, neigh->ha);
+	}
+
+	put_cpu();
+
+	BUG_ON(!list_empty(bulk_head));
+
+	printk_ratelimited(KERN_ALERT "DEBUG: %s %d list_empty %s Bulk %d NF_ACCEPT %d NF_DROP %d Total %d", __func__, __LINE__, !list_empty(head) ? "no" : "yes", nBulk, nAccept, nDrop, nAll); 
+
+	if (!list_empty(head))
+		return NF_ACCEPT;
+
+	/* XXX: What to return here? */
+	return NF_STOLEN;
+}
