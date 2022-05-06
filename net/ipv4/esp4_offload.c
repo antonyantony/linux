@@ -88,6 +88,36 @@ out:
 	return NULL;
 }
 
+static void print_aggr_hist(__u32 *hist, __u32 len, const char *name)
+{
+	unsigned char linebuf[10 * XFRMA_AGGR_HIST_LEN] = "";
+	__u32 l = len;
+
+	if (len > XFRMA_AGGR_HIST_LEN)
+		l = XFRMA_AGGR_HIST_LEN;
+
+	if (len > XFRMA_AGGR_HIST_LEN)
+		printk_ratelimited(KERN_ALERT "DEBUG: %s %s", name, linebuf);
+	else
+		printk_ratelimited(KERN_ALERT "DEBUG: %s %s truncated %u -> %u", name,
+		       linebuf, len, XFRMA_AGGR_HIST_LEN);
+}
+
+static void aggr_hist(__u32 count, __u32 *hist, __u32 len)
+{
+	int i = len;
+	__u32 v;
+
+	while ((i-1) >= 0) {
+		v = 1 << (i - 1);
+		if (count >= v) {
+			hist[i]++;
+			break;
+		}
+	}
+	BUG();
+}
+
 static void esp4_gso_encap(struct xfrm_state *x, struct sk_buff *skb)
 {
 	struct ip_esp_hdr *esph;
@@ -97,6 +127,7 @@ static void esp4_gso_encap(struct xfrm_state *x, struct sk_buff *skb)
 	int proto = iph->protocol;
 	struct sk_buff *iter;
 //	__u32 seq = XFRM_SKB_CB(skb)->seq.output.low;
+	__u32 aggr = 0;
 
 //	xo->proto = proto;
 	iter = skb;
@@ -111,9 +142,13 @@ static void esp4_gso_encap(struct xfrm_state *x, struct sk_buff *skb)
 		esph->spi = x->id.spi;
 		esph->seq_no = htonl(XFRM_SKB_CB(iter)->seq.output.low);
 //		seq++;
+		aggr++;
 
 		iter = iter->next;
 	}
+
+	aggr_hist(aggr, x->xfrm_aggr_hist, XFRMA_AGGR_HIST_LEN);
+	print_aggr_hist(x->xfrm_aggr_hist, XFRMA_AGGR_HIST_LEN, __func__);
 }
 
 static struct sk_buff *xfrm4_tunnel_gso_segment(struct xfrm_state *x,
