@@ -153,6 +153,7 @@ enum {
 #define XFRM_MODE_IN_TRIGGER 3
 #define XFRM_MODE_BEET 4
 #define XFRM_MODE_MAX 5
+#define XFRMA_AGGR_HIST_LEN 8
 
 /* Netlink configuration messages.  */
 enum {
@@ -314,6 +315,7 @@ enum xfrm_attr_type_t {
 	XFRMA_SET_MARK_MASK,	/* __u32 */
 	XFRMA_IF_ID,		/* __u32 */
 	XFRMA_MTIMER_THRESH,	/* __u32 in seconds for input SA */
+	XFRMA_AGGR_HIST,	/* __u32 * XFRMA_AGGR_HIST_LEN */
 	__XFRMA_MAX
 
 #define XFRMA_OUTPUT_MARK XFRMA_SET_MARK	/* Compatibility */

@@ -271,6 +271,9 @@ struct xfrm_state {
 	/* Private data of this transformer, format is opaque,
 	 * interpreted by xfrm_type methods. */
 	void			*data;
+
+// Antony put config option otherwise xfrm_state will get bigger
+	__u32 xfrm_aggr_hist[XFRMA_AGGR_HIST_LEN];
 };
 
 static inline struct net *xs_net(struct xfrm_state *x)
