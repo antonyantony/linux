@@ -855,7 +855,7 @@ int xfrm_output_fast(struct sk_buff *skb)
 		xfrm_state_hold(x);
 
 		if (iter->encapsulation)
-			xfrm_get_inner_ipproto(iter);
+			xfrm_get_inner_ipproto(iter, x);
 		iter->encapsulation = 1;
 
 
