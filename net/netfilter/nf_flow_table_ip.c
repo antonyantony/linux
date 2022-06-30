@@ -432,13 +432,9 @@ static void nft_bulk_ipv6_receive(struct list_head *head, struct sk_buff *skb)
 		struct neighbour *neigh2;
 		bool is_v6gw2 = false;
 
-		if (!NFT_BULK_CB(p)->same_flow)
-			continue;
-
 		dst2 = skb_dst(p);
 		rt2 = (struct rtable*)dst2;
 		if (dst->dev != dst2->dev) {
-			NFT_BULK_CB(p)->same_flow = 0;
 			continue;
 		}
 		neigh2 = ip_neigh_for_gw(rt2, p, &is_v6gw2);
@@ -447,12 +443,10 @@ static void nft_bulk_ipv6_receive(struct list_head *head, struct sk_buff *skb)
 
 		/* Antony this is a weaker condtion, need full route check */
 		if (!ipv6_addr_equal(&ip6h2->daddr, &ip6h->daddr)) {
-			NFT_BULK_CB(p)->same_flow = 0;
 			continue;
 		}
 
 		if (x != dst_xfrm(dst2)) {
-			NFT_BULK_CB(p)->same_flow = 0;
 			continue;
 		}
 
@@ -468,13 +462,11 @@ found:
 		NFT_BULK_CB(p)->last->next = skb;
 
 	NFT_BULK_CB(p)->last = skb;
-	NFT_BULK_CB(skb)->same_flow = 1;
 
 	return;
 out:
 	/* First skb */
 	NFT_BULK_CB(skb)->last = skb;
-	NFT_BULK_CB(skb)->same_flow = 1;
 	list_add_tail(&skb->list, head);
 
 	return;
