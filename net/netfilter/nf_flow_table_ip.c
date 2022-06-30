@@ -1313,6 +1313,16 @@ nf_flow_offload_ipv6_hook_list(void *priv, struct sk_buff *unused,
 	list_for_each_entry_safe(skb, n, head, list) {
 
 		nAll++;
+		const struct ipv6hdr *ip6h = (struct ipv6hdr *)(skb_network_header(skb));
+
+		if (ip6h->nexthdr == IPPROTO_UDP) {
+			struct udphdr *udph = (void *)(skb_network_header(skb) + sizeof(struct ipv6hdr));
+
+			printk_ratelimited(KERN_ALERT "DEBUG: %s %d src %pISpc dst %pISpc flow", __func__, __LINE__, &ip6h->saddr, &ip6h->daddr);
+			if (ntohs(udph->dest) == 5001) {
+				printk_ratelimited(KERN_ALERT "DEBUG: %s %d dest 5001 flow", __func__, __LINE__);
+			}
+		}
 
 		skb_list_del_init(skb);
 		ret = __nf_flow_offload_ipv6_hook(priv, skb, state);
@@ -1368,8 +1378,26 @@ nf_flow_offload_ipv6_hook_list(void *priv, struct sk_buff *unused,
 	put_cpu();
 
 	// BUG_ON(!list_empty(bulk_head));
-
 	printk_ratelimited(KERN_ALERT "DEBUG: %s %d list_empty %s, Bulk %d NF_ACCEPT %d NF_DROP %d Total %d", __func__, __LINE__, !list_empty(head) ? "yes" : "no", nBulk, nAccept, nDrop, nAll);
+
+	/*
+	if (nAll > 1) {
+		u16 dst_port = 0;
+		const struct ipv6hdr *ip6h = (struct ipv6hdr *)(skb_network_header(skb));
+		char *proto;
+
+		if (ip6h->nexthdr == IPPROTO_UDP) {
+			struct udphdr *udph = (void *)(skb_network_header(skb) + sizeof(struct ipv6hdr));
+			dst_port = ntohs(udph->dest);
+			proto = "UDP";
+		} else if (ip6h->nexthdr == IPPROTO_UDP) {
+			struct tcphdr *tcph = (void *)(skb_network_header(skb) + sizeof(struct ipv6hdr));
+			dst_port = ntohs(tcph->dest);
+			proto = "UDP";
+		}
+		printk_ratelimited(KERN_ALERT "DEBUG: %s %d proto %s port %u flow", __func__, __LINE__, proto, dst_port);
+	}
+	*/
 
 	if (!list_empty(head))
 		return NF_ACCEPT;
