@@ -394,15 +394,10 @@ found:
 
 	NFT_BULK_CB(p)->last = skb;
 	skb_pull(skb, sizeof(*iph));
-	/* XXX: Copy or alloc new one? */
-	__skb_ext_copy(skb, p);
 
 	return 0;
 out:
 	/* First skb */
-	NFT_BULK_CB(skb)->last = skb;
-	list_add_tail(&skb->list, head);
-
 	x = xfrm_state_lookup(dev_net(skb->dev), skb->mark,
 			(xfrm_address_t *)&daddr,
 			spi, IPPROTO_ESP, AF_INET);
@@ -412,6 +407,9 @@ out:
 	sp = secpath_set(skb);
 	if (!sp)
 		return -ENOMEM;
+
+	NFT_BULK_CB(skb)->last = skb;
+	list_add_tail(&skb->list, head);
 
 	sp->xvec[sp->len++] = x;
 	skb_pull(skb, sizeof(*iph));
@@ -822,7 +820,7 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 		skb->next = skb_shinfo(skb)->frag_list;
 		skb_shinfo(skb)->frag_list = NULL;
 
-		ret = xfrm_input_list(&skb, IPPROTO_ESP, 0, -2);
+		ret = xfrm_input_list(&skb, IPPROTO_ESP, 0, -3);
 		/* Returns always 0 */
 	}
 

@@ -393,7 +393,9 @@ struct xfrm_type {
 	int			(*init_state)(struct xfrm_state *x);
 	void			(*destructor)(struct xfrm_state *);
 	int			(*input)(struct xfrm_state *, struct sk_buff *skb);
+	int			(*input_list)(struct xfrm_state *, struct list_head *head);
 	int			(*output)(struct xfrm_state *, struct sk_buff *pskb);
+	int			(*output_list)(struct xfrm_state *x, struct list_head *head);
 	int			(*reject)(struct xfrm_state *, struct sk_buff *,
 					  const struct flowi *);
 };
