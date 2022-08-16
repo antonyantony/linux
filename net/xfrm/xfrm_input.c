@@ -562,8 +562,6 @@ lock:
 		XFRM_SKB_CB(skb)->seq.input.low = seq;
 		XFRM_SKB_CB(skb)->seq.input.hi = seq_hi;
 
-		dev_hold(skb->dev);
-
 		if (bulk)
 			return 0;
 
@@ -572,11 +570,11 @@ lock:
 		else
 			nexthdr = x->type->input(x, skb);
 
-		if (nexthdr == -EINPROGRESS)
+		if (nexthdr == -EINPROGRESS) {
+			dev_hold(skb->dev);
 			return nexthdr;
+		}
 resume:
-		dev_put(skb->dev);
-
 		spin_lock(&x->lock);
 		if (nexthdr < 0) {
 			if (nexthdr == -EBADMSG) {
@@ -870,6 +868,7 @@ EXPORT_SYMBOL(xfrm_input);
 
 int xfrm_input_resume(struct sk_buff *skb, int nexthdr)
 {
+	dev_put(skb->dev);
 	return xfrm_input(skb, nexthdr, 0, -1);
 }
 EXPORT_SYMBOL(xfrm_input_resume);
