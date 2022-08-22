@@ -736,15 +736,20 @@ static struct net_device_path *dev_fwd_path(struct net_device_path_stack *stack)
 }
 
 int dev_fill_forward_path(const struct net_device *dev, const u8 *daddr,
-			  struct net_device_path_stack *stack)
+			  struct sk_buff *skb, struct net_device_path_stack *stack)
 {
 	const struct net_device *last_dev;
 	struct net_device_path_ctx ctx = {
 		.dev	= dev,
 		.daddr	= daddr,
+		.dst	= skb_dst(skb),
 	};
 	struct net_device_path *path;
-	int ret = 0;
+	int ret;
+
+	ret = xfrm_decode_session(skb, &ctx.flowi, AF_INET);
+	if (ret < 0)
+		return ret;
 
 	stack->num_paths = 0;
 	while (ctx.dev && ctx.dev->netdev_ops->ndo_fill_forward_path) {

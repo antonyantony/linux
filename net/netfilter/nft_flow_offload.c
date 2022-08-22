@@ -36,9 +36,9 @@ static void nft_default_forward_path(struct nf_flow_route *route,
 	route->tuple[dir].xmit_type	= nft_xmit_type(dst_cache);
 }
 
-/*
 static int nft_dev_fill_forward_path(const struct nf_flow_route *route,
 				     const struct dst_entry *dst_cache,
+				     const struct nft_pktinfo *pkt,
 				     const struct nf_conn *ct,
 				     enum ip_conntrack_dir dir, u8 *ha,
 				     struct net_device_path_stack *stack)
@@ -61,7 +61,7 @@ static int nft_dev_fill_forward_path(const struct nf_flow_route *route,
 	if (!(nud_state & NUD_VALID))
 		return -1;
 
-	return dev_fill_forward_path(dev, ha, stack);
+	return dev_fill_forward_path(dev, ha, pkt->skb, stack);
 }
 
 struct nft_forward_info {
@@ -180,6 +180,7 @@ static bool nft_flowtable_find_dev(const struct net_device *dev,
 }
 
 static void nft_dev_forward_path(struct nf_flow_route *route,
+				 const struct nft_pktinfo *pkt,
 				 const struct nf_conn *ct,
 				 enum ip_conntrack_dir dir,
 				 struct nft_flowtable *ft)
@@ -190,7 +191,7 @@ static void nft_dev_forward_path(struct nf_flow_route *route,
 	unsigned char ha[ETH_ALEN];
 	int i;
 
-	if (nft_dev_fill_forward_path(route, dst, ct, dir, ha, &stack) >= 0)
+	if (nft_dev_fill_forward_path(route, dst, pkt, ct, dir, ha, &stack) >= 0)
 		nft_dev_path_info(&stack, &info, ha, &ft->data);
 
 	if (!info.indev || !nft_flowtable_find_dev(info.indev, ft))
@@ -212,7 +213,6 @@ static void nft_dev_forward_path(struct nf_flow_route *route,
 		route->tuple[dir].xmit_type = info.xmit_type;
 	}
 }
-*/
 
 static int nft_flow_route(const struct nft_pktinfo *pkt,
 			  const struct nf_conn *ct,
@@ -243,13 +243,8 @@ static int nft_flow_route(const struct nft_pktinfo *pkt,
 	nft_default_forward_path(route, this_dst, dir);
 	nft_default_forward_path(route, other_dst, !dir);
 
-/*
-	if (route->tuple[dir].xmit_type	== FLOW_OFFLOAD_XMIT_NEIGH &&
-	    route->tuple[!dir].xmit_type == FLOW_OFFLOAD_XMIT_NEIGH) {
-		nft_dev_forward_path(route, ct, dir, ft);
-		nft_dev_forward_path(route, ct, !dir, ft);
-	}
-*/
+	nft_dev_forward_path(route, pkt, ct, dir, ft);
+	nft_dev_forward_path(route, pkt, ct, !dir, ft);
 
 	return 0;
 }
