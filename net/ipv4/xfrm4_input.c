@@ -213,6 +213,8 @@ struct sk_buff *xfrm4_gro_udp_encap_rcv(struct sock *sk, struct list_head *head,
 	pp = call_gro_receive(ops->callbacks.gro_receive, head, skb);
 	rcu_read_unlock();
 
+	XFRM_INC_STATS(dev_net(skb->dev), LINUX_MIB_XFRMUDPENCAPGRORX); // XfrmUdpEncapGroRx
+        /*  if it works tcpdump should not show ESP packet only UDP packet would appearthere */
 	return pp;
 
 out:

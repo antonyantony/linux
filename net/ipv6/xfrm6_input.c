@@ -210,6 +210,7 @@ struct sk_buff *xfrm6_gro_udp_encap_rcv(struct sock *sk, struct list_head *head,
 	pp = call_gro_receive(ops->callbacks.gro_receive, head, skb);
 	rcu_read_unlock();
 
+	XFRM_INC_STATS(dev_net(skb->dev), LINUX_MIB_XFRMUDPENCAPGRORX6); //XfrmUdpEncapGroRx6
 	return pp;
 
 out:
