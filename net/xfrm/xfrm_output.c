@@ -760,7 +760,7 @@ struct sk_buff *xfrm_output_list(struct sk_buff *skb)
 	struct net *net = dev_net(skb_dst(skb)->dev);
 	struct xfrm_state *x = skb_dst(skb)->xfrm;
 	struct list_head head;
-	struct list_head head2;
+//	struct list_head head2;
 	struct dst_entry *dst;
 //	struct sec_path *sp;
 	struct sk_buff *iter;
