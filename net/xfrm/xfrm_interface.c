@@ -367,7 +367,7 @@ static int xfrmi_fill_forward_path(struct net_device_path_ctx *ctx,
 	path->tun.ip.daddr = ctx->flowi.u.ip4.daddr;
 	path->tun.dst = dst;
 	path->dev = ctx->dev;
-	ctx->dev = xi->dev;
+	ctx->dev = dst->dev;
 
 	return 0;
 
