@@ -4313,6 +4313,7 @@ int dev_rx_weight __read_mostly = 64;
 int dev_tx_weight __read_mostly = 64;
 /* Maximum number of GRO_NORMAL skbs to batch up for list-RX */
 int gro_normal_batch __read_mostly = 8;
+EXPORT_SYMBOL_GPL(gro_normal_batch);
 
 /* Called with irq disabled */
 static inline void ____napi_schedule(struct softnet_data *sd,
