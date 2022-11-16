@@ -1,0 +1,13 @@
+flush ruleset
+table ip x {
+	flowtable x {
+		hook ingress priority filter
+			devices = { eth1, dummy0}
+	}
+
+	chain y {
+		type filter hook forward priority filter; policy accept;
+			flow add @x counter packets 0 bytes 0
+			counter packets 0 bytes 0
+	}
+}
