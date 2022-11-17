@@ -608,6 +608,7 @@ static inline int nft_dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 				rc = nft_qdisc_enqueue(skb, q, txq, &to_free);
 				__qdisc_run(q);
 				qdisc_run_end(q);
+				XFRM_NFT_INC_STATS(dev_net(dev), LINUX_MIB_NFTQDISCPACKETS);
 
 				goto out;
 			}
@@ -620,12 +621,16 @@ static inline int nft_dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 			return NET_XMIT_SUCCESS;
 		}
 
+		XFRM_NFT_INC_STATS(dev_net(dev), LINUX_MIB_NFTQDISCPACKETS);
 		rc = nft_qdisc_enqueue(skb, q, txq, &to_free);
 		qdisc_run(q);
 
 out:
-		if (unlikely(to_free))
+		if (unlikely(to_free)) {
+			XFRM_NFT_INC_STATS(dev_net(dev), LINUX_MIB_NFTNETDEVERR);
+
 			kfree_skb_list(to_free);
+		}
 
 
 		return rc;
@@ -692,7 +697,7 @@ static int nft_dev_queue_xmit(struct sk_buff *skb)
 	 * Check this and shot the lock. It is not prone from deadlocks.
 	 *Either shot noqueue qdisc, it is even simpler 8)
 	 */
-	
+
 	if (dev->flags & IFF_UP) {
 		int cpu = smp_processor_id();
 
@@ -843,6 +848,7 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 	}
 
 	list_for_each_entry_safe(skb, n, bulk_head, list) {
+		struct iphdr *iph;
 
 		list_del_init(&skb->list);
 
@@ -862,6 +868,12 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 		if (!neigh) {
 			kfree_skb_list(skb);
 			continue;
+		}
+
+		if (our_ip_red(skb, &iph) || our_ip_black(skb, &iph)) {
+			struct net *net = dev_net(rt->dst.dev);
+			XFRM_NFT_INC_STATS(net, LINUX_MIB_NFTFASTPATHPACKETS);
+
 		}
 
 		nf_flow_neigh_xmit_list(skb, rt->dst.dev, neigh->ha);
@@ -932,9 +944,9 @@ nf_flow_offload_ip_hook(void *priv, struct sk_buff *skb,
 
 	ret = __nf_flow_offload_ip_hook(priv, skb, state);
 	if (ret == 0)
-		return NF_ACCEPT;	
+		return NF_ACCEPT;
 	else if (ret == -1)
-		return NF_DROP;	
+		return NF_DROP;
 
 	tuplehash = NFT_BULK_CB(skb)->tuplehash;
 

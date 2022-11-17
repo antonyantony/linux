@@ -786,4 +786,14 @@ void ip_sock_set_pktinfo(struct sock *sk);
 void ip_sock_set_recverr(struct sock *sk);
 void ip_sock_set_tos(struct sock *sk, int val);
 
+bool our_ip_red(struct sk_buff *skb, struct iphdr **iph);
+bool our_ip_black(struct sk_buff *skb, struct iphdr **iph);
+bool our_ip(struct sk_buff *skb, struct iphdr **iph);
+#ifdef CONFIG_XFRM_STATISTICS
+#define XFRM_NFT_INC_STATS(net, field)      SNMP_INC_STATS((net)->mib.xfrm_statistics, field)
+#else
+#define XFRM_NFT_INC_STATS(net, field)      ((void)(net))
+#endif
+
+
 #endif	/* _IP_H */

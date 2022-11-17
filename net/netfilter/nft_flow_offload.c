@@ -47,10 +47,13 @@ static int nft_dev_fill_forward_path(const struct nf_flow_route *route,
 	struct net_device *dev = dst_cache->dev;
 	struct neighbour *n;
 	u8 nud_state;
+	struct net *net = nft_net(pkt);
 
 	n = dst_neigh_lookup(dst_cache, daddr);
-	if (!n)
+	if (!n) {
+		XFRM_NFT_INC_STATS(net, LINUX_MIB_NFTFASTPATHNEIGHERROR);
 		return -1;
+	}
 
 	read_lock_bh(&n->lock);
 	nud_state = n->nud_state;
@@ -58,8 +61,10 @@ static int nft_dev_fill_forward_path(const struct nf_flow_route *route,
 	read_unlock_bh(&n->lock);
 	neigh_release(n);
 
-	if (!(nud_state & NUD_VALID))
+	if (!(nud_state & NUD_VALID)) {
+		XFRM_NFT_INC_STATS(net, LINUX_MIB_NFTFASTPATHNEIGHERROR);
 		return -1;
+	}
 
 	return dev_fill_forward_path(dev, ha, pkt->skb, stack);
 }
@@ -179,7 +184,7 @@ static bool nft_flowtable_find_dev(const struct net_device *dev,
 	return found;
 }
 
-static void nft_dev_forward_path(struct nf_flow_route *route,
+static int nft_dev_forward_path(struct nf_flow_route *route,
 				 const struct nft_pktinfo *pkt,
 				 const struct nf_conn *ct,
 				 enum ip_conntrack_dir dir,
@@ -191,11 +196,13 @@ static void nft_dev_forward_path(struct nf_flow_route *route,
 	unsigned char ha[ETH_ALEN];
 	int i;
 
-	if (nft_dev_fill_forward_path(route, dst, pkt, ct, dir, ha, &stack) >= 0)
-		nft_dev_path_info(&stack, &info, ha, &ft->data);
+	if (nft_dev_fill_forward_path(route, dst, pkt, ct, dir, ha, &stack) < 0)
+		return -1;
+
+	nft_dev_path_info(&stack, &info, ha, &ft->data);
 
 	if (!info.indev || !nft_flowtable_find_dev(info.indev, ft))
-		return;
+		return -1;
 
 	route->tuple[!dir].in.ifindex = info.indev->ifindex;
 	for (i = 0; i < info.num_encaps; i++) {
@@ -212,6 +219,8 @@ static void nft_dev_forward_path(struct nf_flow_route *route,
 		route->tuple[dir].out.hw_ifindex = info.hw_outdev->ifindex;
 		route->tuple[dir].xmit_type = info.xmit_type;
 	}
+
+	return 0;
 }
 
 static int nft_flow_route(const struct nft_pktinfo *pkt,
@@ -223,6 +232,7 @@ static int nft_flow_route(const struct nft_pktinfo *pkt,
 	struct dst_entry *this_dst = skb_dst(pkt->skb);
 	struct dst_entry *other_dst = NULL;
 	struct flowi fl;
+	struct net *net = nft_net(pkt);
 
 	memset(&fl, 0, sizeof(fl));
 	switch (nft_pf(pkt)) {
@@ -243,8 +253,14 @@ static int nft_flow_route(const struct nft_pktinfo *pkt,
 	nft_default_forward_path(route, this_dst, dir);
 	nft_default_forward_path(route, other_dst, !dir);
 
-	nft_dev_forward_path(route, pkt, ct, dir, ft);
-	nft_dev_forward_path(route, pkt, ct, !dir, ft);
+	if (nft_dev_forward_path(route, pkt, ct, dir, ft) < 0 ||
+			nft_dev_forward_path(route, pkt, ct, !dir, ft) < 0) {
+		struct net *net = nft_net(pkt);
+		XFRM_NFT_INC_STATS(net, LINUX_MIB_NFTFASTPATHERROR);
+		return -EINVAL;
+	}
+
+        XFRM_NFT_INC_STATS(net, LINUX_MIB_NFTFASTPATHOK);
 
 	return 0;
 }

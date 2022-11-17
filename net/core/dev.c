@@ -5249,6 +5249,7 @@ static int __netif_receive_skb_core(struct sk_buff **pskb, bool pfmemalloc,
 	bool deliver_exact = false;
 	int ret = NET_RX_DROP;
 	__be16 type;
+	struct iphdr *iph;
 
 	net_timestamp_check(!netdev_tstamp_prequeue, skb);
 
@@ -5260,6 +5261,9 @@ static int __netif_receive_skb_core(struct sk_buff **pskb, bool pfmemalloc,
 	if (!skb_transport_header_was_set(skb))
 		skb_reset_transport_header(skb);
 	skb_reset_mac_len(skb);
+
+	if (our_ip(skb, &iph))
+		XFRM_NFT_INC_STATS(dev_net(orig_dev), LINUX_MIB_NFTSLOWPATHPACKETS);
 
 	pt_prev = NULL;
 
@@ -11690,3 +11694,50 @@ out:
 }
 
 subsys_initcall(net_dev_init);
+
+static bool __our_ip(void *data, struct iphdr **_iph)
+{
+	struct iphdr *iph = (struct iphdr *)data;
+
+	if (iph->version == 6)
+		return false;
+	if (iph->version != 4) {
+		pr_info("AA %s %d unknown IPv %d", __func__, __LINE__, iph->version );
+		return false;
+	}
+
+	if (ntohl(iph->daddr) == 0x0a146502 || // 10.20.101.2 le32 red
+	    ntohl(iph->daddr) == 0x0a146602 || // 10.20.102.2 le32 red
+	    ntohl(iph->daddr) == 0x0a6e0025 || // 10.110.0.37 le32 black
+	    ntohl(iph->daddr) == 0x0a6e0024 // 10.110.0.34 le32 black
+	    ) {
+		*_iph = iph;
+		return true;
+	}
+
+	return false;
+}
+
+bool our_ip(struct sk_buff *skb, struct iphdr **_iph)
+{
+	return our_ip_red(skb, _iph);
+}
+EXPORT_SYMBOL(our_ip);
+
+bool our_ip_red(struct sk_buff *skb, struct iphdr **_iph)
+{
+	if (skb->protocol != htons(ETH_P_IP))
+		return false;
+
+	return __our_ip(skb->data, _iph);
+}
+EXPORT_SYMBOL(our_ip_red);
+
+bool our_ip_black(struct sk_buff *skb, struct iphdr **_iph)
+{
+	if (skb->protocol != htons(ETH_P_IP))
+		return false;
+
+	return __our_ip(skb_network_header(skb), _iph);
+}
+EXPORT_SYMBOL(our_ip_black);
