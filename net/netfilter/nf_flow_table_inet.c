@@ -31,8 +31,8 @@ nf_flow_offload_inet_hook(void *priv, struct sk_buff *skb,
 	switch (proto) {
 	case htons(ETH_P_IP):
 		return nf_flow_offload_ip_hook_list(priv, skb, state);
-//	case htons(ETH_P_IPV6):
-//		return nf_flow_offload_ipv6_hook(priv, skb, state);
+	case htons(ETH_P_IPV6):
+		return nf_flow_offload_ipv6_hook_list(priv, skb, state);
 	}
 
 	return NF_ACCEPT;
