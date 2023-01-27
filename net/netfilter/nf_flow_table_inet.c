@@ -30,9 +30,9 @@ nf_flow_offload_inet_hook(void *priv, struct sk_buff *skb,
 
 	switch (proto) {
 	case htons(ETH_P_IP):
-		return nf_flow_offload_ip_hook(priv, skb, state);
-	case htons(ETH_P_IPV6):
-		return nf_flow_offload_ipv6_hook(priv, skb, state);
+		return nf_flow_offload_ip_hook_list(priv, skb, state);
+//	case htons(ETH_P_IPV6):
+//		return nf_flow_offload_ipv6_hook(priv, skb, state);
 	}
 
 	return NF_ACCEPT;
@@ -77,7 +77,8 @@ static struct nf_flowtable_type flowtable_ipv4 = {
 	.setup		= nf_flow_table_offload_setup,
 	.action		= nf_flow_rule_route_ipv4,
 	.free		= nf_flow_table_free,
-	.hook		= nf_flow_offload_ip_hook,
+	.hook		= nf_flow_offload_ip_hook_list,
+//	.hook		= nf_flow_offload_ip_hook,
 	.owner		= THIS_MODULE,
 };
 
