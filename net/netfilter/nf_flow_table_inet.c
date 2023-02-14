@@ -88,7 +88,8 @@ static struct nf_flowtable_type flowtable_ipv6 = {
 	.setup		= nf_flow_table_offload_setup,
 	.action		= nf_flow_rule_route_ipv6,
 	.free		= nf_flow_table_free,
-	.hook		= nf_flow_offload_ipv6_hook,
+	.hook		= nf_flow_offload_ipv6_hook_list,
+//	.hook		= nf_flow_offload_ipv6_hook,
 	.owner		= THIS_MODULE,
 };
 
