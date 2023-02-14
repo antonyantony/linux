@@ -1519,7 +1519,7 @@ nf_flow_offload_ipv6_hook_list(void *priv, struct sk_buff *unused,
 		rt = (struct rt6_info *)skb_dst(skb);
 
 		neigh = ip_neigh_gw6(rt->dst.dev, rt6_nexthop(rt, &ipv6_hdr(skb)->daddr));
-		if (!neigh) {
+		if (IS_ERR(neigh)) {
 			kfree_skb_list(skb);
 			continue;
 		}
