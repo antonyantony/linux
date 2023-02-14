@@ -973,7 +973,7 @@ nf_flow_offload_ip_hook_list(void *priv, struct sk_buff *unused,
 		rt = (struct rtable *)skb_dst(skb);
 
 		neigh = ip_neigh_gw4(rt->dst.dev, rt_nexthop(rt, ip_hdr(skb)->daddr));
-		if (!neigh) {
+		if (IS_ERR(neigh)) {
 			kfree_skb_list(skb);
 			continue;
 		}
