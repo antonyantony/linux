@@ -172,6 +172,94 @@ struct nf_flowtable_ctx {
 	u32			hdrsize;
 };
 
+static int nf_flow_tuple_ipv6(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
+			      struct flow_offload_tuple *tuple)
+{
+	struct flow_ports *ports;
+	struct ip_esp_hdr *esph;
+	struct ipv6hdr *ip6h;
+	unsigned int thoff;
+	u8 nexthdr;
+
+	thoff = sizeof(*ip6h) + ctx->offset;
+	if (!pskb_may_pull(skb, thoff))
+		return -1;
+
+	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + ctx->offset);
+
+	nexthdr = ip6h->nexthdr;
+	switch (nexthdr) {
+	case IPPROTO_TCP:
+		ctx->hdrsize = sizeof(struct tcphdr);
+		break;
+	case IPPROTO_UDP:
+		ctx->hdrsize = sizeof(struct udphdr);
+		break;
+#ifdef CONFIG_NF_CT_PROTO_GRE
+	case IPPROTO_GRE:
+		ctx->hdrsize = sizeof(struct gre_base_hdr);
+		break;
+#endif
+	case IPPROTO_ESP:
+		ctx->hdrsize = sizeof(struct ip_esp_hdr);
+		break;
+	default:
+		return -1;
+	}
+
+	if (ip6h->hop_limit <= 1)
+		return -1;
+
+	if (!pskb_may_pull(skb, thoff + ctx->hdrsize))
+		return -1;
+
+	switch (nexthdr) {
+	case IPPROTO_TCP:
+	case IPPROTO_UDP:
+		ports = (struct flow_ports *)(skb_network_header(skb) + thoff);
+		tuple->src_port		= ports->source;
+		tuple->dst_port		= ports->dest;
+		break;
+	case IPPROTO_GRE: {
+		struct gre_base_hdr *greh;
+
+		greh = (struct gre_base_hdr *)(skb_network_header(skb) + thoff);
+		if ((greh->flags & GRE_VERSION) != GRE_VERSION_0)
+			return -1;
+		}
+		break;
+	case IPPROTO_ESP:
+		esph = (struct ip_esp_hdr *)(skb_network_header(skb) + thoff);
+		tuple->spi		= esph->spi;
+		break;
+	}
+
+	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + ctx->offset);
+
+	tuple->src_v6		= ip6h->saddr;
+	tuple->dst_v6		= ip6h->daddr;
+	tuple->l3proto		= AF_INET6;
+	tuple->l4proto		= nexthdr;
+	tuple->iifidx		= ctx->in->ifindex;
+	nf_flow_tuple_encap(skb, tuple);
+
+	/*
+	if (ip6h->nexthdr == IPPROTO_ESP) {
+		pr_info("lookup: %pI6 -> %pI6 l3proto=%u l4proto=%u spi=%x iif=%u\n",
+			&tuple->src_v6, &tuple->dst_v6,
+			tuple->l3proto, tuple->l4proto,
+			tuple->spi, tuple->iifidx);
+	} else {
+		pr_info("lookup: %pI6 -> %pI6 l3proto=%u l4proto=%u iif=%u\n",
+			&tuple->src_v6, &tuple->dst_v6,
+			tuple->l3proto, tuple->l4proto,
+			tuple->iifidx);
+	}
+	*/
+
+	return 0;
+}
+
 static int nf_flow_tuple_ip(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
 			    struct flow_offload_tuple *tuple)
 {
@@ -260,6 +348,7 @@ static int nf_flow_tuple_ip(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
 			&tuple->src_v4, &tuple->dst_v4,
 			tuple->l3proto, tuple->l4proto,
 			tuple->iifidx);
+	}
 */
 
 	return 0;
@@ -372,10 +461,14 @@ nf_flow_offload_lookup(struct nf_flowtable_ctx *ctx,
 	struct flow_offload_tuple tuple = {};
 
 	if (skb->protocol != htons(ETH_P_IP) &&
+	    (skb->protocol != htons(ETH_P_IPV6)) &&
 	    !nf_flow_skb_encap_protocol(skb, htons(ETH_P_IP), &ctx->offset))
 		return NULL;
 
-	if (nf_flow_tuple_ip(ctx, skb, &tuple) < 0)
+	if (skb->protocol == htons(ETH_P_IP) && nf_flow_tuple_ip(ctx, skb, &tuple) < 0)
+		return NULL;
+
+	if (skb->protocol == htons(ETH_P_IPV6) && nf_flow_tuple_ipv6(ctx, skb, &tuple) < 0)
 		return NULL;
 
 	return flow_offload_lookup(flow_table, &tuple);
@@ -1060,94 +1153,6 @@ static void nf_flow_nat_ipv6(const struct flow_offload *flow,
 	}
 }
 
-static int nf_flow_tuple_ipv6(struct nf_flowtable_ctx *ctx, struct sk_buff *skb,
-			      struct flow_offload_tuple *tuple)
-{
-	struct flow_ports *ports;
-	struct ip_esp_hdr *esph;
-	struct ipv6hdr *ip6h;
-	unsigned int thoff;
-	u8 nexthdr;
-
-	thoff = sizeof(*ip6h) + ctx->offset;
-	if (!pskb_may_pull(skb, thoff))
-		return -1;
-
-	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + ctx->offset);
-
-	nexthdr = ip6h->nexthdr;
-	switch (nexthdr) {
-	case IPPROTO_TCP:
-		ctx->hdrsize = sizeof(struct tcphdr);
-		break;
-	case IPPROTO_UDP:
-		ctx->hdrsize = sizeof(struct udphdr);
-		break;
-#ifdef CONFIG_NF_CT_PROTO_GRE
-	case IPPROTO_GRE:
-		ctx->hdrsize = sizeof(struct gre_base_hdr);
-		break;
-#endif
-	case IPPROTO_ESP:
-		ctx->hdrsize = sizeof(struct ip_esp_hdr);
-		break;
-	default:
-		return -1;
-	}
-
-	if (ip6h->hop_limit <= 1)
-		return -1;
-
-	if (!pskb_may_pull(skb, thoff + ctx->hdrsize))
-		return -1;
-
-	switch (nexthdr) {
-	case IPPROTO_TCP:
-	case IPPROTO_UDP:
-		ports = (struct flow_ports *)(skb_network_header(skb) + thoff);
-		tuple->src_port		= ports->source;
-		tuple->dst_port		= ports->dest;
-		break;
-	case IPPROTO_GRE: {
-		struct gre_base_hdr *greh;
-
-		greh = (struct gre_base_hdr *)(skb_network_header(skb) + thoff);
-		if ((greh->flags & GRE_VERSION) != GRE_VERSION_0)
-			return -1;
-		}
-		break;
-	case IPPROTO_ESP:
-		esph = (struct ip_esp_hdr *)(skb_network_header(skb) + thoff);
-		tuple->spi		= esph->spi;
-		break;
-	}
-
-	ip6h = (struct ipv6hdr *)(skb_network_header(skb) + ctx->offset);
-
-	tuple->src_v6		= ip6h->saddr;
-	tuple->dst_v6		= ip6h->daddr;
-	tuple->l3proto		= AF_INET6;
-	tuple->l4proto		= nexthdr;
-	tuple->iifidx		= ctx->in->ifindex;
-	nf_flow_tuple_encap(skb, tuple);
-
-	/*
-	if (ip6h->nexthdr == IPPROTO_ESP) {
-		pr_info("lookup: %pI6 -> %pI6 l3proto=%u l4proto=%u spi=%x iif=%u\n",
-			&tuple->src_v6, &tuple->dst_v6,
-			tuple->l3proto, tuple->l4proto,
-			tuple->spi, tuple->iifidx);
-	} else {
-		pr_info("lookup: %pI6 -> %pI6 l3proto=%u l4proto=%u iif=%u\n",
-			&tuple->src_v6, &tuple->dst_v6,
-			tuple->l3proto, tuple->l4proto,
-			tuple->iifidx);
-	}
-	*/
-
-	return 0;
-}
-
 static int nf_flow_offload_ipv6_forward(struct nf_flowtable_ctx *ctx,
 					struct nf_flowtable *flow_table,
 					struct flow_offload_tuple_rhash *tuplehash,
@@ -1521,6 +1526,7 @@ nf_flow_offload_ipv6_hook_list(void *priv, struct sk_buff *unused,
 
 		nf_flow_neigh_xmit_list(skb, rt->dst.dev, neigh->ha);
 	}
+
 
 	BUG_ON(!list_empty(bulk_head));
 
