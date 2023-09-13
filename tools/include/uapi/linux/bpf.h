@@ -5558,6 +5558,23 @@ union bpf_attr {
  *		0 on success.
  *
  *		**-ENOENT** if the bpf_local_storage cannot be found.
+ *
+ * long bpf_xdp_get_xfrm_state_spi(void *ctx, struct bpf_xfrm_state *params, struct bpf_xfrm_state *xfrm_state, int size, u32 flags)
+ *	Description
+ *		Retrieve the XFRM state (IP transform framework) using SPI.
+ *		**ip-xfrm(8)**) at *index* in XFRM "security path" for *skb*.
+ *
+ *		The retrieved value is stored in the **struct bpf_xfrm_state**
+ *		pointed by *xfrm_state* and of length *size*.
+ *
+ *		All values for *flags* are reserved for future usage, and must
+ *		be left at zero.
+ *
+ *		This helper is available only if the kernel was compiled with
+ *		**CONFIG_XFRM** configuration option.
+ *	Return
+ *		0 on success, or a negative error in case of failure.
+ *
  */
 #define ___BPF_FUNC_MAPPER(FN, ctx...)			\
 	FN(unspec, 0, ##ctx)				\
@@ -5772,6 +5789,7 @@ union bpf_attr {
 	FN(user_ringbuf_drain, 209, ##ctx)		\
 	FN(cgrp_storage_get, 210, ##ctx)		\
 	FN(cgrp_storage_delete, 211, ##ctx)		\
+	FN(xdp_get_xfrm_state_spi, 212, ##ctx)     	\
 	/* */
 
 /* backwards-compatibility macros for users of __BPF_FUNC_MAPPER that don't
@@ -6055,6 +6073,8 @@ struct bpf_xfrm_state {
 	__u32 reqid;
 	__u32 spi;	/* Stored in network byte order */
 	__u16 family;
+	__u32 pcpu_num;
+	__u8  proto;    /* this is not the best place AA */
 	__u16 ext;	/* Padding, future use. */
 	union {
 		__u32 remote_ipv4;	/* Stored in network byte order */
