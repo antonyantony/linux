@@ -104,6 +104,8 @@
 #include "../kselftest.h"
 #include "xsk_xdp_metadata.h"
 
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
 static const char *MAC1 = "\x00\x0A\x56\x9E\xEE\x62";
 static const char *MAC2 = "\x00\x0A\x56\x9E\xEE\x61";
 
@@ -370,7 +372,7 @@ static void parse_command_line(struct ifobject *ifobj_tx, struct ifobject *ifobj
 				break;
 
 			memcpy(ifobj->ifname, optarg,
-			       min_t(size_t, MAX_INTERFACE_NAME_CHARS, strlen(optarg)));
+			       min((size_t)MAX_INTERFACE_NAME_CHARS, strlen(optarg)));
 
 			ifobj->ifindex = if_nametoindex(ifobj->ifname);
 			if (!ifobj->ifindex)

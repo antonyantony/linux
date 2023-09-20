@@ -31,7 +31,7 @@ struct ipv4_packet {
 	struct ethhdr eth;
 	struct iphdr iph;
 	struct tcphdr tcp;
-} __packed;
+} __attribute__((packed));
 extern struct ipv4_packet pkt_v4;
 
 /* ipv6 test vector */
@@ -39,7 +39,7 @@ struct ipv6_packet {
 	struct ethhdr eth;
 	struct ipv6hdr iph;
 	struct tcphdr tcp;
-} __packed;
+} __attribute__((packed));
 extern struct ipv6_packet pkt_v6;
 
 int settimeo(int fd, int timeout_ms);
