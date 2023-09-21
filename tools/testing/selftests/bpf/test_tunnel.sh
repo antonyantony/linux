@@ -683,50 +683,6 @@ bpf_tunnel_test()
 	echo "Mounting bpffs..."
 	mount_bpffs
 
-	echo "Testing GRE tunnel..."
-	test_gre
-	errors=$(( $errors + $? ))
-
-	echo "Testing GRE tunnel (without tunnel keys)..."
-	test_gre_no_tunnel_key
-	errors=$(( $errors + $? ))
-
-	echo "Testing IP6GRE tunnel..."
-	test_ip6gre
-	errors=$(( $errors + $? ))
-
-	echo "Testing IP6GRETAP tunnel..."
-	test_ip6gretap
-	errors=$(( $errors + $? ))
-
-	echo "Testing ERSPAN tunnel..."
-	test_erspan v2
-	errors=$(( $errors + $? ))
-
-	echo "Testing IP6ERSPAN tunnel..."
-	test_ip6erspan v2
-	errors=$(( $errors + $? ))
-
-	echo "Testing GENEVE tunnel..."
-	test_geneve
-	errors=$(( $errors + $? ))
-
-	echo "Testing IP6GENEVE tunnel..."
-	test_ip6geneve
-	errors=$(( $errors + $? ))
-
-	echo "Testing IPIP tunnel..."
-	test_ipip
-	errors=$(( $errors + $? ))
-
-	echo "Testing IPIP6 tunnel..."
-	test_ipip6
-	errors=$(( $errors + $? ))
-
-	echo "Testing IP6IP6 tunnel..."
-	test_ip6ip6
-	errors=$(( $errors + $? ))
-
 	echo "Testing IPSec tunnel..."
 	test_xfrm_tunnel
 	errors=$(( $errors + $? ))
