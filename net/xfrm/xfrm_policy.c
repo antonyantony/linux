@@ -4276,6 +4276,7 @@ void __init xfrm_init(void)
 #endif
 
 	register_xfrm_state_bpf();
+	register_xfrm_state_cpu_bpf();
 }
 
 #ifdef CONFIG_AUDITSYSCALL
