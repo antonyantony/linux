@@ -91,9 +91,11 @@ ip -netns host1 route flush cache
 # blcok ping in the middle. Only allowed through the tunnel
 ip netns exec host3 nft add table inet filter
 ip netns exec host3 nft add chain inet filter FORWARD { type filter hook forward priority filter\; policy drop \; }
-ip netns exec host3 nft add rule inet filter FORWARD ip protocol icmp drop
-ip netns exec host3 nft add rule inet filter FORWARD ip6 nexthdr icmpv6 icmpv6 type echo-reply drop
-ip netns exec host3 nft add rule inet filter FORWARD ip6 nexthdr icmpv6 icmpv6 type destination-unreachable drop
+ip netns exec host3 nft add rule inet filter FORWARD counter ip protocol icmp drop
+ip netns exec host3 nft add rule inet filter FORWARD counter ip6 nexthdr icmpv6 icmpv6 type echo-reply drop
+ip netns exec host3 nft add rule inet filter FORWARD counter ip6 nexthdr icmpv6 icmpv6 type destination-unreachable drop
+ip netns exec host3 nft add rule inet filter FORWARD counter ip protocol esp accept
+ip netns exec host3 nft add rule inet filter FORWARD counter drop
 
 ip netns exec host1 traceroute -m 7 -nnn 10.1.5.2 || echo success
 
