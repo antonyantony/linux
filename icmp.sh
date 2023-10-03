@@ -89,7 +89,12 @@ ip netns exec host1 traceroute -m 7 -nnn 10.1.5.2 || (echo FAILED && exit 1)
 ip -netns host1 route flush cache
 
 # blcok ping in the middle. Only allowed through the tunnel
-ip netns exec host3 iptables -A FORWARD -p icmp -j DROP
+ip netns exec host3 nft add table inet filter
+ip netns exec host3 nft add chain inet filter FORWARD { type filter hook forward priority filter\; policy drop \; }
+ip netns exec host3 nft add rule inet filter FORWARD ip protocol icmp drop
+ip netns exec host3 nft add rule inet filter FORWARD ip6 nexthdr icmpv6 icmpv6 type echo-reply drop
+ip netns exec host3 nft add rule inet filter FORWARD ip6 nexthdr icmpv6 icmpv6 type destination-unreachable drop
+
 ip netns exec host1 traceroute -m 7 -nnn 10.1.5.2 || echo success
 
 ip -netns host2 xfrm policy add src 10.1.1.0/24 dst 10.1.5.0/24 dir out \
@@ -141,7 +146,7 @@ ip -netns host1 route flush cache
 # ip -netns host2 x p
 # ping ttl 3 will be dropped at host5 10.1.4.2
 # From 10.1.4.2 icmp_seq=1 Time to live exceeded
-ip netns exec host1 ping -W 2 -c 1 -t 3 10.1.5.2 || echo ""
+ip netns exec host1 ping -W 2 -c 1 -t 3 10.1.5.2 && echo "ERROR" || echo "success expected 100% packet loss"
 sleep 2
 # both seq and oseq should be 0x1
 # anti-replay context: seq 0x1, oseq 0x0, bitmap 0x00000001
