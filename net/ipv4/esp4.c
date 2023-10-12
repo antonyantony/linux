@@ -788,8 +788,9 @@ int esp_input_done2(struct sk_buff *skb, int err)
 		 *    This is an inbound SA, so just compare
 		 *    SRC ports.
 		 */
-		if (iph->saddr != x->props.saddr.a4 ||
-		    source != encap->encap_sport) {
+		if (encap->encap_sport /* for randomized ports 0, no mpaaing change */ &&
+		    (iph->saddr != x->props.saddr.a4 ||
+		    source != encap->encap_sport)) {
 			xfrm_address_t ipaddr;
 
 			ipaddr.a4 = iph->saddr;

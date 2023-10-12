@@ -835,8 +835,9 @@ int esp6_input_done2(struct sk_buff *skb, int err)
 		 *    This is an inbound SA, so just compare
 		 *    SRC ports.
 		 */
-		if (!ipv6_addr_equal(&ip6h->saddr, &x->props.saddr.in6) ||
-		    source != encap->encap_sport) {
+		if (encap->encap_sport /* for randomized ports 0, no mpaaing change */ &&
+		    (!ipv6_addr_equal(&ip6h->saddr, &x->props.saddr.in6) ||
+		    source != encap->encap_sport)) {
 			xfrm_address_t ipaddr;
 
 			memcpy(&ipaddr.a6, &ip6h->saddr.s6_addr, sizeof(ipaddr.a6));
