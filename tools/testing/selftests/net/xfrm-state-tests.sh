@@ -1,10 +1,10 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 #
-# Check xfrm state creation.
-#
-# See "test=" for the implemented tests.
-#
+# Check xfrm tunnel Topology:
+# 1.2   1.1   2.1  2.10    3.1   3.2
+# eth1  eth1 veth0 veth0 eth1   eth1
+# ns1 ---- r1 ----- r2 ---- ns4
 
 source lib.sh
 
