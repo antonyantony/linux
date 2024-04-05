@@ -360,6 +360,16 @@ static int verify_newsa_info(struct xfrm_usersa_info *p,
 		}
 	}
 
+	if (attrs[XFRMA_SA_DIR]) {
+		u8 sa_dir = nla_get_u8(attrs[XFRMA_SA_DIR]);
+
+		if (sa_dir != XFRM_SA_DIR_IN && sa_dir != XFRM_SA_DIR_OUT)  {
+			NL_SET_ERR_MSG(extack, "XFRMA_SA_DIR attribute is out of range");
+			err = -EINVAL;
+			goto out;
+		}
+	}
+
 out:
 	return err;
 }
@@ -627,6 +637,7 @@ static void xfrm_update_ae_params(struct xfrm_state *x, struct nlattr **attrs,
 	struct nlattr *et = attrs[XFRMA_ETIMER_THRESH];
 	struct nlattr *rt = attrs[XFRMA_REPLAY_THRESH];
 	struct nlattr *mt = attrs[XFRMA_MTIMER_THRESH];
+	struct nlattr *dir = attrs[XFRMA_SA_DIR];
 
 	if (re && x->replay_esn && x->preplay_esn) {
 		struct xfrm_replay_state_esn *replay_esn;
@@ -661,6 +672,9 @@ static void xfrm_update_ae_params(struct xfrm_state *x, struct nlattr **attrs,
 
 	if (mt)
 		x->mapping_maxage = nla_get_u32(mt);
+
+	if (dir)
+		x->dir = nla_get_u8(dir);
 }
 
 static void xfrm_smark_init(struct nlattr **attrs, struct xfrm_mark *m)
@@ -779,6 +793,77 @@ error_no_put:
 	return NULL;
 }
 
+static int verify_sa_dir(const struct xfrm_state *x, struct netlink_ext_ack *extack)
+{
+	if (x->dir == XFRM_SA_DIR_OUT)  {
+		if (x->props.replay_window > 0) {
+			NL_SET_ERR_MSG(extack, "Replay window should not be set for OUT SA");
+			return -EINVAL;
+		}
+
+		if (x->replay.seq || x->replay.bitmap) {
+			NL_SET_ERR_MSG(extack,
+				       "Replay seq, or bitmap should not be set for OUT SA with ESN");
+			return -EINVAL;
+		}
+
+		if (x->replay_esn) {
+			if (x->replay_esn->replay_window > 1) {
+				NL_SET_ERR_MSG(extack,
+					       "Replay window should be 1 for OUT SA with ESN");
+				return -EINVAL;
+			}
+
+			if (x->replay_esn->seq || x->replay_esn->seq_hi || x->replay_esn->bmp_len) {
+				NL_SET_ERR_MSG(extack,
+					       "Replay seq, seq_hi, bmp_len should not be set for OUT SA with ESN");
+				return -EINVAL;
+			}
+		}
+
+		if (x->props.flags & XFRM_STATE_DECAP_DSCP) {
+			NL_SET_ERR_MSG(extack, "Flag NDECAP_DSCP should not be set for OUT SA");
+			return -EINVAL;
+		}
+
+		if (x->props.flags & XFRM_STATE_ICMP) {
+			NL_SET_ERR_MSG(extack, "Flag ICMP should not be set for OUT SA");
+			return -EINVAL;
+		}
+
+		if (x->mapping_maxage) {
+			NL_SET_ERR_MSG(extack, "MTIMER_THRESH should not be set for OUT SA");
+			return -EINVAL;
+		}
+	} else {
+		if (x->replay.oseq) {
+			NL_SET_ERR_MSG(extack,
+				       "Replay oseq should not be set for IN SA");
+			return -EINVAL;
+		}
+
+		if (x->replay_esn) {
+			if (x->replay_esn->oseq || x->replay_esn->oseq_hi) {
+				NL_SET_ERR_MSG(extack,
+					       "Replay oseq and oseq_hi should not be set for IN SA with ESN");
+				return -EINVAL;
+			}
+		}
+
+		if (x->props.flags & XFRM_STATE_NOPMTUDISC) {
+			NL_SET_ERR_MSG(extack, "Flag NOPMTUDISC should not be set for IN SA");
+			return -EINVAL;
+		}
+
+		if (x->xflags & XFRM_SA_XFLAG_DONT_ENCAP_DSCP) {
+			NL_SET_ERR_MSG(extack, "Flag DONT_ENCAP_DSCP should not be set for IN SA");
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
 static int xfrm_add_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 		       struct nlattr **attrs, struct netlink_ext_ack *extack)
 {
@@ -795,6 +880,16 @@ static int xfrm_add_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	x = xfrm_state_construct(net, p, attrs, &err, extack);
 	if (!x)
 		return err;
+
+	if (x->dir) {
+		err = verify_sa_dir(x, extack);
+		if (err) {
+			x->km.state = XFRM_STATE_DEAD;
+			xfrm_dev_state_delete(x);
+			xfrm_state_put(x);
+			return err;
+		}
+	}
 
 	xfrm_state_hold(x);
 	if (nlh->nlmsg_type == XFRM_MSG_NEWSA)
@@ -1182,8 +1277,13 @@ static int copy_to_user_state_extra(struct xfrm_state *x,
 		if (ret)
 			goto out;
 	}
-	if (x->mapping_maxage)
+	if (x->mapping_maxage) {
 		ret = nla_put_u32(skb, XFRMA_MTIMER_THRESH, x->mapping_maxage);
+		if (ret)
+			goto out;
+	}
+	if (x->dir)
+		ret = nla_put_u8(skb, XFRMA_SA_DIR, x->dir);
 out:
 	return ret;
 }
@@ -1579,11 +1679,21 @@ static int xfrm_alloc_userspi(struct sk_buff *skb, struct nlmsghdr *nlh,
 	u32 mark;
 	struct xfrm_mark m;
 	u32 if_id = 0;
+	u8 sa_dir = 0;
 
 	p = nlmsg_data(nlh);
 	err = verify_spi_info(p->info.id.proto, p->min, p->max, extack);
 	if (err)
 		goto out_noput;
+
+	if (attrs[XFRMA_SA_DIR]) {
+		sa_dir = nla_get_u8(attrs[XFRMA_SA_DIR]);
+		if (sa_dir != XFRM_SA_DIR_IN && sa_dir != XFRM_SA_DIR_OUT)  {
+			NL_SET_ERR_MSG(extack, "XFRMA_SA_DIR attribute is out of range");
+			err = -EINVAL;
+			goto out_noput;
+		}
+	}
 
 	family = p->info.family;
 	daddr = &p->info.id.daddr;
@@ -1617,6 +1727,8 @@ static int xfrm_alloc_userspi(struct sk_buff *skb, struct nlmsghdr *nlh,
 	err = xfrm_alloc_spi(x, p->min, p->max, extack);
 	if (err)
 		goto out;
+
+	x->dir = sa_dir;
 
 	resp_skb = xfrm_state_netlink(skb, x, nlh->nlmsg_seq);
 	if (IS_ERR(resp_skb)) {
@@ -2402,7 +2514,8 @@ static inline unsigned int xfrm_aevent_msgsize(struct xfrm_state *x)
 	       + nla_total_size_64bit(sizeof(struct xfrm_lifetime_cur))
 	       + nla_total_size(sizeof(struct xfrm_mark))
 	       + nla_total_size(4) /* XFRM_AE_RTHR */
-	       + nla_total_size(4); /* XFRM_AE_ETHR */
+	       + nla_total_size(4) /* XFRM_AE_ETHR */
+	       + nla_total_size(sizeof(x->dir)); /* XFRMA_SA_DIR */
 }
 
 static int build_aevent(struct sk_buff *skb, struct xfrm_state *x, const struct km_event *c)
@@ -2458,6 +2571,12 @@ static int build_aevent(struct sk_buff *skb, struct xfrm_state *x, const struct 
 	err = xfrm_if_id_put(skb, x->if_id);
 	if (err)
 		goto out_cancel;
+
+	if (x->dir) {
+		err = nla_put_u8(skb, XFRMA_SA_DIR, x->dir);
+		if (err)
+			goto out_cancel;
+	}
 
 	nlmsg_end(skb, nlh);
 	return 0;
@@ -3018,6 +3137,7 @@ EXPORT_SYMBOL_GPL(xfrm_msg_min);
 #undef XMSGSIZE
 
 const struct nla_policy xfrma_policy[XFRMA_MAX+1] = {
+	[XFRMA_UNSPEC]		= { .strict_start_type = XFRMA_SA_DIR },
 	[XFRMA_SA]		= { .len = sizeof(struct xfrm_usersa_info)},
 	[XFRMA_POLICY]		= { .len = sizeof(struct xfrm_userpolicy_info)},
 	[XFRMA_LASTUSED]	= { .type = NLA_U64},
@@ -3049,6 +3169,7 @@ const struct nla_policy xfrma_policy[XFRMA_MAX+1] = {
 	[XFRMA_SET_MARK_MASK]	= { .type = NLA_U32 },
 	[XFRMA_IF_ID]		= { .type = NLA_U32 },
 	[XFRMA_MTIMER_THRESH]   = { .type = NLA_U32 },
+	[XFRMA_SA_DIR]          = { .type = NLA_U8 }
 };
 EXPORT_SYMBOL_GPL(xfrma_policy);
 
@@ -3189,8 +3310,9 @@ static void xfrm_netlink_rcv(struct sk_buff *skb)
 
 static inline unsigned int xfrm_expire_msgsize(void)
 {
-	return NLMSG_ALIGN(sizeof(struct xfrm_user_expire))
-	       + nla_total_size(sizeof(struct xfrm_mark));
+	return NLMSG_ALIGN(sizeof(struct xfrm_user_expire)) +
+	       nla_total_size(sizeof(struct xfrm_mark)) +
+	       nla_total_size(sizeof_field(struct xfrm_state, dir));
 }
 
 static int build_expire(struct sk_buff *skb, struct xfrm_state *x, const struct km_event *c)
@@ -3216,6 +3338,12 @@ static int build_expire(struct sk_buff *skb, struct xfrm_state *x, const struct 
 	err = xfrm_if_id_put(skb, x->if_id);
 	if (err)
 		return err;
+
+	if (x->dir) {
+		err = nla_put_u8(skb, XFRMA_SA_DIR, x->dir);
+		if (err)
+			return err;
+	}
 
 	nlmsg_end(skb, nlh);
 	return 0;
@@ -3323,6 +3451,9 @@ static inline unsigned int xfrm_sa_len(struct xfrm_state *x)
 
 	if (x->mapping_maxage)
 		l += nla_total_size(sizeof(x->mapping_maxage));
+
+	if (x->dir)
+		l += nla_total_size(sizeof(x->dir));
 
 	return l;
 }

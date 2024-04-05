@@ -1744,6 +1744,7 @@ static struct xfrm_state *xfrm_state_clone(struct xfrm_state *orig,
 	x->lastused = orig->lastused;
 	x->new_mapping = 0;
 	x->new_mapping_sport = 0;
+	x->dir = orig->dir;
 
 	return x;
 
@@ -1855,6 +1856,9 @@ int xfrm_state_update(struct xfrm_state *x)
 
 	err = -ESRCH;
 	if (!x1)
+		goto out;
+
+	if (x1->dir != x->dir)
 		goto out;
 
 	if (xfrm_state_kern(x1)) {
