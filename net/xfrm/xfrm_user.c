@@ -807,9 +807,9 @@ static int verify_sa_dir(const struct xfrm_state *x, struct netlink_ext_ack *ext
 		}
 
 		if (x->replay_esn) {
-			if (x->replay_esn->replay_window > 1) {
+			if (x->replay_esn->replay_window) {
 				NL_SET_ERR_MSG(extack,
-					       "Replay window should be 1 for OUT SA with ESN");
+					       "Replay window should be 0 for OUT SA with ESN");
 				return -EINVAL;
 			}
 
@@ -819,9 +819,9 @@ static int verify_sa_dir(const struct xfrm_state *x, struct netlink_ext_ack *ext
 				return -EINVAL;
 			}
 
-			if (x->replay_esn->bmp_len > 1) {
+			if (x->replay_esn->bmp_len) {
 				NL_SET_ERR_MSG(extack,
-					       "Replay bmp_len should not be > 1 for OUT SA with ESN");
+					       "Replay bmp_len should not set for OUT SA with ESN");
 				return -EINVAL;
 			}
 		}
