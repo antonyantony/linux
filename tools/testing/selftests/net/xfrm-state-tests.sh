@@ -886,7 +886,7 @@ test_ip_xfrm_dir_out_exception () {
 test_ip_xfrm_dir_out_replay_exception() {
 	setup namespace || return $ksft_skip
 	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp spi 3 reqid 2 replay-window 10 mode tunnel dir out aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 || true
-	echo ${out} | grep -q 'Error: Replay-window too big'
+	echo ${out} | grep -q 'Replay window should not be set for OUT SA'
 }
 
 test_ip_xfrm_dir_out() {
@@ -898,7 +898,7 @@ test_ip_xfrm_dir_out() {
 
 test_ip_xfrm_dir_out_esn() {
 	setup namespace || return $ksft_skip
-	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp spi 3 reqid 2 mode tunnel dir out flag esn aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 if_id 11 replay-window 1
+	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp spi 3 reqid 2 mode tunnel dir out flag esn aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 if_id 11
 	run_cmd ${ns_a} ip xfrm state
 	echo $out | grep -q 'dir out'
 }
@@ -906,7 +906,7 @@ test_ip_xfrm_dir_out_esn() {
 test_ip_xfrm_dir_out_esn_replay_exception() {
 	setup namespace || return $ksft_skip
 	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp spi 3 reqid 2 replay-window 10 mode tunnel dir out aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 flag esn || true
-	echo ${out} | grep -q 'Error: ESN replay-window too big'
+	echo ${out} | grep -q 'Error: Replay window should be 0 for OUT SA with ESN'
 }
 
 test_pmtu_ipv4_exception() {
