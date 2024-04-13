@@ -196,6 +196,7 @@ setup_ns()
 {
 	local ns_name=""
 	local ns_list=()
+	local suffix=$(mktemp -u XXXXXX)
 	for ns_name in "$@"; do
 		# avoid conflicts with local var: internal error
 		if [ "${ns_name}" = "ns_name" ]; then
@@ -206,7 +207,7 @@ setup_ns()
 
 		# Some test may setup/remove same netns multi times
 		if [ -z "${!ns_name}" ]; then
-			eval "${ns_name}=${ns_name,,}-$(mktemp -u XXXXXX)"
+			eval "${ns_name}=${ns_name,,}${suffix}"
 		else
 			cleanup_ns "${!ns_name}"
 		fi
