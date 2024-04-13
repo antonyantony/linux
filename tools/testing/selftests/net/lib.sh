@@ -163,10 +163,11 @@ setup_ns()
 	local ns_name=""
 	local ns_list=""
 	local ns_exist=
+	local prefix=$(mktemp -u XXXXXX)
 	for ns_name in "$@"; do
 		# Some test may setup/remove same netns multi times
 		if unset ${ns_name} 2> /dev/null; then
-			ns="${ns_name,,}-$(mktemp -u XXXXXX)"
+			ns="${ns_name,,}-${prefix}"
 			eval readonly ${ns_name}="$ns"
 			ns_exist=false
 		else
