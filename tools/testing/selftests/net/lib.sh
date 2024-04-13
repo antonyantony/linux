@@ -13,6 +13,7 @@ source "$net_dir/lib/sh/defer.sh"
 : "${PAUSE_ON_FAIL:=no}"
 
 BUSYWAIT_TIMEOUT=$((WAIT_TIMEOUT * 1000)) # ms
+: "DEBUG=${DEBUG:-no}"
 
 # Kselftest framework constants.
 ksft_pass=0
@@ -196,7 +197,8 @@ setup_ns()
 {
 	local ns_name=""
 	local ns_list=()
-	local suffix=$(mktemp -u XXXXXX)
+	local suffix=""
+	[ "${DEBUG}" == "no" ] && suffix="-"$(mktemp -u XXXXXX)
 	for ns_name in "$@"; do
 		# avoid conflicts with local var: internal error
 		if [ "${ns_name}" = "ns_name" ]; then
