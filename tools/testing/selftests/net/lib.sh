@@ -7,6 +7,7 @@
 : "${WAIT_TIMEOUT:=20}"
 
 BUSYWAIT_TIMEOUT=$((WAIT_TIMEOUT * 1000)) # ms
+DEBUG=${DEBUG:-no}
 
 # Kselftest framework constants.
 ksft_pass=0
@@ -164,10 +165,12 @@ setup_ns()
 	local ns_list=""
 	local ns_exist=
 	local prefix=$(mktemp -u XXXXXX)
+	local suffix=""
+	[ "${DEBUG}" == "no" ] && suffix="-"$(mktemp -u XXXXXX)
 	for ns_name in "$@"; do
 		# Some test may setup/remove same netns multi times
 		if unset ${ns_name} 2> /dev/null; then
-			ns="${ns_name,,}-${prefix}"
+			ns="${ns_name,,}${suffix}"
 			eval readonly ${ns_name}="$ns"
 			ns_exist=false
 		else
