@@ -473,7 +473,8 @@ cleanup() {
 	tcpdump_pids=
 
 	if [ "${fail}" = "yes" -a -n "${desc}" ]; then
-		printf "TEST: %-60s  [ FAIL EXCEPTION $fail ]\n" "${desc}"
+		printf "TEST: %-60s  [ FAIL EXCEPTION ]\n" "${desc}"
+		[ -n "${test_out}" ]  && echo -e "${test_out}\n"
 	fi
 
 	cleanup_all_ns
@@ -586,7 +587,8 @@ test_ip_xfrm_dir_out_esn() {
 	setup namespace || return $ksft_skip
 	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp spi 3 reqid 2 mode tunnel dir out flag esn aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 if_id 11
 	run_cmd ${ns_a} ip xfrm state
-	echo $out | grep -q 'dir out'
+	echo $out | grep -q 'dir out' || rc=1
+	return ${rc}
 }
 
 test_ip_xfrm_dir_out_esn_replay_exception() {
@@ -599,10 +601,9 @@ test_ip_xfrm_dir_icmmp_out_exception() {
 	setup namespace || return $ksft_skip
 	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp spi 3 reqid 2 mode tunnel dir out aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 flag esn flag icmp || true
 	rc=0
-	echo ${out} | grep -q 'ICMP should not be set for input SA' || rc=1
+	echo ${out} | grep -q 'ICMP should not be set for output SA' || rc=1
+	return ${rc}
 }
-
-
 
 ################################################################################
 #
