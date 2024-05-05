@@ -35,8 +35,6 @@ PAUSE_ON_FAIL=no
 VERBOSE=${VERBOSE:-0}
 TRACING=0
 
-# Assumes ping support ping6 without any switches.
-
 #               Name                          Description
 tests="
 	unreachable_ipv4		IPv4 unreachable from router r3
@@ -44,7 +42,9 @@ tests="
 	unreachable_gw_ipv4		IPv4 unreachable from IPsec gateway s2
 	unreachable_gw_ipv6		IPv6 unreachable from IPsec gateway s2
 	mtu_ipv4_r2			IPv4 MTU exceeded from ESP router r2
+	mtu_ipv6_r2			IPv6 MTU exceeded from ESP router r2
 	mtu_ipv4_r3			IPv4 MTU exceeded router r3
+	mtu_ipv6_r3			IPv6 MTU exceeded router r3
 	sa_dir_in			add SA dir in
 	sa_dir_out			add SA dir out
 	sa_dir_out_esn			add SA dir out with ESN
@@ -58,8 +58,9 @@ tests="
 	sa_dir_in_data_exception_ipv6	IPv6 input data path exception
 	sa_dir_out_data_exception_ipv6	IPv6 output data pat exception"
 
-imax=7
 ns_set="a r1 s1 r2 s2 r3 b" # Network topology default
+imax=7 # number of namespaces in the test
+
 prefix4="10.1"
 prefix6="fc00"
 
@@ -284,11 +285,6 @@ vm_set() {
 	s1_dst=${dst}
 	s1_src_net=${src_net}
 	s1_dst_net=${dst_net}
-
-	s2_src=${dst}
-	s2_dst=${src}
-	s2_src_net=${dst_net}
-	s2_dst_net=${src_net}
 }
 
 setup_vm_set_v4() {
@@ -431,7 +427,7 @@ setup_xfrm() {
 	run_cmd ${ns_s1} ip xfrm policy add src ${s1_src_net} dst ${s1_dst_net} dir out \
 		tmpl src ${s1_src} dst ${s1_dst} proto esp reqid 1 mode tunnel
 
-	# no "dir in" policies.
+	# no "input" policies. we are only doing forwarding.
 	# run_cmd ${ns_s1} ip xfrm policy add src ${s1_dst_net} dst ${s1_src_net} dir in \
 	#	flag icmp tmpl src ${s1_dst} dst ${s1_src} proto esp reqid 2 mode tunnel
 
@@ -468,10 +464,6 @@ setup_xfrm() {
 setup_xfrm_ex(){
 	run_cmd ${ns_s1} ip xfrm policy add src ${s1_src_net} dst ${s1_dst_net} dir out \
 		tmpl src ${s1_src} dst ${s1_dst} proto esp reqid 1 mode tunnel
-
-	# no "dir in" policies.
-	# run_cmd ${ns_s1} ip xfrm policy add src ${s1_dst_net} dst ${s1_src_net} dir in \
-	#	flag icmp tmpl src ${s1_dst} dst ${s1_src} proto esp reqid 2 mode tunnel
 
 	run_cmd ${ns_s1} ip xfrm policy add src ${s1_dst_net} dst ${s1_src_net} dir fwd \
 		flag icmp tmpl src ${s1_dst} dst ${s1_src} proto esp reqid 2 mode tunnel
@@ -613,6 +605,18 @@ test_mtu_ipv4_r2() {
 	return ${rc}
 }
 
+test_mtu_ipv6_r2() {
+	setup vm_set_v6 namespaces veths routes xfrm nft_add_icmpv6_filter || return $ksft_skip
+	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 fc00:6::2
+	run_cmd ${ns_r2} ip -6 route replace fc00:3::/64 dev eth1 metric 256 src fc00:3::2 mtu 1300
+	run_cmd ${ns_r2} ip -6 route replace fc00:4::/64 dev eth0 metric 256 src fc00:4::1 mtu 1300
+	run_cmd ${ns_a} ping -M do -s 1300 -W 5 -w 4 -c 1 fc00:6::2 || true
+	rc=0
+	# note the error should be s1 not from r2
+	echo -e "$out" | grep -q -E "From fc00:2::2 icmp_seq=.* Packet too big: mtu=1230" || rc=1
+	return ${rc}
+}
+
 test_mtu_ipv4_r3() {
 	setup vm_set_v4 namespaces veths routes xfrm nft_add_icmp_filter || return $ksft_skip
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 10.1.6.2
@@ -620,6 +624,17 @@ test_mtu_ipv4_r3() {
 	run_cmd ${ns_a} ping -M do -s 1350 -W 5 -w 4 -c 1 10.1.6.2 || true
 	rc=0
 	echo -e "$out" | grep -q -E "From 10.1.5.2 icmp_seq=.* Frag needed and DF set \(mtu = 1300\)" || rc=1
+	return ${rc}
+}
+
+test_mtu_ipv6_r3() {
+	setup vm_set_v6 namespaces veths routes xfrm nft_add_icmpv6_filter || return $ksft_skip
+	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 fc00:6::2
+	run_cmd ${ns_r3} ip -6 route replace fc00:6::/64 dev eth1 metric 256 src fc00:6::1 mtu 1300
+	run_cmd ${ns_a} ping -M do -s 1300 -W 5 -w 4 -c 1 fc00:6::2 || true
+	rc=0
+	# note the error should be s1 not from r2
+	echo -e "$out" | grep -q -E "From fc00:5::2 icmp_seq=.* Packet too big: mtu=1300" || rc=1
 	return ${rc}
 }
 
@@ -745,7 +760,7 @@ usage() {
 	echo "If no TEST argument is given, all tests will be run."
 	echo
 	echo -e "\t-p Pause on fail"
-	echo -e "\t-v Verbose output. Show commands; -vv Show output"
+	echo -e "\t-v Verbose output. Show commands; -vv Show output also"
 	echo "Available tests${tests}"
 	exit 1
 }
@@ -782,12 +797,12 @@ name=""
 desc=""
 fail="no"
 
-# start clean
+# end cleanup
 cleanup
 
 for t in ${tests}; do
-	[ "${name}" = "" ]	&& name="${t}"	&& continue
-	[ "${desc}" = "" ]	&& desc="${t}"
+	[ "${name}" = "" ] && name="${t}" && continue
+	[ "${desc}" = "" ] && desc="${t}"
 
 	run_this=1
 	for arg do
