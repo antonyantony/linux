@@ -23,6 +23,11 @@
 #  eth0  eth1  eth0  eth1  eth0  eth1  eth0  eth1  eth0  eth1
 # a -------- r1 -------- s1 -------- r2 -------- s2 -------- b
 #
+# Network topology: s2 for IPsec gateways directly connected.
+# 10.1.c.d or IPv6 fc00:c::d/64
+#   1.1   1.2   2.1   2.2   3.1   3.2
+#  eth0  eth1  eth0  eth1  eth0  eth1
+# a -------- s1 -------- s2 -------- b
 
 source lib.sh
 
@@ -39,7 +44,19 @@ tests="
 	mtu_ipv4_r2			IPv4 MTU exceeded from ESP router r2
 	mtu_ipv6_r2			IPv6 MTU exceeded from ESP router r2
 	mtu_ipv4_r3			IPv4 MTU exceeded router r3
-	mtu_ipv6_r3			IPv6 MTU exceeded router r3"
+	mtu_ipv6_r3			IPv6 MTU exceeded router r3
+	sa_dir_in			add SA dir in
+	sa_dir_out			add SA dir out
+	sa_dir_out_esn			add SA dir out with ESN
+	sa_dir_in_exception		add SA dir in offload exception config
+	sa_dir_out_exception		add SA dir out with replay config
+	sa_dir_out_replay_exception	add SA dir out replay exception
+	sa_dir_out_esn_replay_exception	add SA dir out ESN replay exception
+	sa_dir_icmp_out_exception	add SA dir out with icmp flag
+	sa_dir_out_data_exception_ipv4	IPv4 output data path exception
+	sa_dir_in_data_exception_ipv4	IPv4 input data path exception
+	sa_dir_in_data_exception_ipv6	IPv6 input data path exception
+	sa_dir_out_data_exception_ipv6	IPv6 output data pat exception"
 
 ns_set="a r1 s1 r2 s2 r3 b" # Network topology default
 imax=7 # number of namespaces in the test
@@ -328,6 +345,36 @@ setup_vm_set_v6x() {
 	vm_set
 }
 
+setup_vm_set_v4s2() {
+	ns_set="a s1 s2 b" # Network topology: s2 IPv4
+	imax=4
+	prefix=${prefix4}
+	s="."
+	S="."
+	src="10.1.2.1"
+	dst="10.1.2.2"
+	src_net="10.1.1.0/24"
+	dst_net="10.1.3.0/24"
+	prefix_len=24
+
+	vm_set
+}
+
+setup_vm_set_v6s2() {
+	ns_set="a s1 s2 b" # Network topology: s2 IPv6
+	imax=4
+	prefix=${prefix6}
+	s=":"
+	S="::"
+	src="fc00:2::1"
+	dst="fc00:2::2"
+	src_net="fc00:1::0/64"
+	dst_net="fc00:3::0/64"
+	prefix_len=64
+
+	vm_set
+}
+
 setup_veths() {
 	i=1
 	for ns in ${ns_active}; do
@@ -395,6 +442,40 @@ setup_xfrm() {
 	run_cmd ${ns_s1} ip xfrm state add src ${s1_dst} dst ${s1_src} proto esp spi 2 \
 		reqid 2 flag icmp replay-window 8 mode tunnel aead 'rfc4106(gcm(aes))' \
 		0x2222222222222222222222222222222222222222 96 \
+		sel src ${s1_dst_net} dst ${s1_src_net}
+
+	run_cmd ${ns_s2} ip xfrm policy add src ${s1_dst_net} dst ${s1_src_net} dir out \
+		flag icmp tmpl src ${s1_dst} dst ${s1_src} proto esp reqid 2 mode tunnel
+
+	run_cmd ${ns_s2} ip xfrm policy add src ${s1_src_net} dst ${s1_dst_net} dir fwd \
+		tmpl src ${s1_src} dst ${s1_dst} proto esp reqid 1 mode tunnel
+
+	run_cmd ${ns_s2} ip xfrm state add src ${s1_dst} dst ${s1_src} proto esp spi 2 \
+		reqid 2 mode tunnel aead 'rfc4106(gcm(aes))' \
+		0x2222222222222222222222222222222222222222 96 \
+		sel src ${s1_dst_net} dst ${s1_src_net}
+
+	run_cmd ${ns_s2} ip xfrm state add src ${s1_src} dst ${s1_dst} proto esp spi 1 \
+		reqid 1 flag icmp replay-window 8 mode tunnel aead 'rfc4106(gcm(aes))' \
+		0x1111111111111111111111111111111111111111 96 \
+		sel src ${s1_src_net} dst ${s1_dst_net}
+}
+
+setup_xfrm_ex(){
+	run_cmd ${ns_s1} ip xfrm policy add src ${s1_src_net} dst ${s1_dst_net} dir out \
+		tmpl src ${s1_src} dst ${s1_dst} proto esp reqid 1 mode tunnel
+
+	run_cmd ${ns_s1} ip xfrm policy add src ${s1_dst_net} dst ${s1_src_net} dir fwd \
+		flag icmp tmpl src ${s1_dst} dst ${s1_src} proto esp reqid 2 mode tunnel
+
+	run_cmd ${ns_s1} ip xfrm state add src ${s1_src} dst ${s1_dst} proto esp spi 1 \
+		reqid 1 mode tunnel aead 'rfc4106(gcm(aes))' \
+		0x1111111111111111111111111111111111111111 96 dir in \
+		sel src ${s1_src_net} dst ${s1_dst_net}
+
+	run_cmd ${ns_s1} ip xfrm state add src ${s1_dst} dst ${s1_src} proto esp spi 2 \
+		reqid 2 mode tunnel aead 'rfc4106(gcm(aes))' \
+		0x2222222222222222222222222222222222222222 96 dir out \
 		sel src ${s1_dst_net} dst ${s1_src_net}
 
 	run_cmd ${ns_s2} ip xfrm policy add src ${s1_dst_net} dst ${s1_src_net} dir out \
@@ -554,6 +635,120 @@ test_mtu_ipv6_r3() {
 	rc=0
 	# note the error should be s1 not from r2
 	echo -e "$out" | grep -q -E "From fc00:5::2 icmp_seq=.* Packet too big: mtu=1300" || rc=1
+	return ${rc}
+}
+
+test_sa_dir_in() {
+	setup namespace || return $ksft_skip
+	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp \
+		spi 3 reqid 2 replay-window 10 mode tunnel dir in \
+		aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96
+	run_cmd ${ns_a} ip xfrm state
+	rc=0
+	echo $out | grep -q 'dir in' || rc=1
+	return ${rc}
+}
+
+test_sa_dir_in_exception () {
+	setup namespace || return $ksft_skip
+	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp \
+		spi 3 reqid 2 replay-window 10 mode tunnel dir in \
+		aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 \
+		offload dev tunl0 dir out || true
+	echo ${out} | grep -q 'Mismatched SA and offload direction'
+}
+
+test_sa_dir_out_exception () {
+	setup namespace || return $ksft_skip
+	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp \
+		spi 3 reqid 2 mode tunnel dir out \
+		aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 \
+		offload dev tunl0 dir in || true
+	echo ${out} | grep -q 'Mismatched SA and offload direction'
+}
+
+test_sa_dir_out_replay_exception() {
+	setup namespace || return $ksft_skip
+	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp \
+		spi 3 reqid 2 replay-window 10 mode tunnel dir out \
+		aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 \
+		|| true
+	echo ${out} | grep -q 'Replay window should be 0 for output SA'
+}
+
+test_sa_dir_out() {
+	setup namespace || return $ksft_skip
+	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp \
+	spi 3 reqid 2 mode tunnel dir out \
+	aead 'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 96 if_id 11
+	run_cmd ${ns_a} ip xfrm state
+	echo $out | grep -q 'dir out'
+}
+
+test_sa_dir_out_esn() {
+	setup namespace || return $ksft_skip
+	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp \
+		spi 3 reqid 2 mode tunnel dir out flag esn aead \
+		'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 \
+		96 if_id 11
+	run_cmd ${ns_a} ip xfrm state
+	echo $out | grep -q 'dir out' || rc=1
+	return ${rc}
+}
+
+test_sa_dir_out_esn_replay_exception() {
+	setup namespace || return $ksft_skip
+	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp \
+		spi 3 reqid 2 replay-window 10 mode tunnel dir out aead \
+		'rfc4106(gcm(aes))' 0x2222222222222222222222222222222222222222 \
+		96 flag esn || true
+	echo ${out} | grep -q 'Error: Replay window should be 0 for output SA'
+}
+
+test_sa_dir_icmp_out_exception() {
+	setup namespace || return $ksft_skip
+	run_cmd ${ns_a} ip xfrm state add src 10.1.3.4 dst 10.1.2.3 proto esp \
+		spi 3 reqid 2 mode tunnel dir out aead 'rfc4106(gcm(aes))' \
+		0x2222222222222222222222222222222222222222 96 flag esn \
+		flag icmp || true
+	rc=0
+	echo ${out} | grep -q 'ICMP should not be set for output SA' || rc=1
+	return ${rc}
+}
+
+test_sa_dir_out_data_exception_ipv4() {
+	setup vm_set_v4s2 namespaces veths routes xfrm_ex || return $ksft_skip
+	run_cmd ${ns_a} ping -W 3 -w 2 -c 1 10.1.3.2 || true
+	rc=0
+	run_cmd ${ns_s1} grep -vw 0 /proc/net/xfrm_stat
+	echo ${out} | grep -q 'XfrmOutStateDirError' || rc=1
+	return ${rc}
+}
+
+test_sa_dir_in_data_exception_ipv4() {
+	setup vm_set_v4s2 namespaces veths routes xfrm_ex || return $ksft_skip
+	run_cmd ${ns_b} ping -W 3 -w 2 -c 1 10.1.1.1 || true
+	rc=0
+	run_cmd ${ns_s1} grep -vw 0 /proc/net/xfrm_stat
+	echo ${out} | grep -q 'XfrmInStateDirError'|| rc=1
+	return ${rc}
+}
+
+test_sa_dir_out_data_exception_ipv6() {
+	setup vm_set_v6s2 namespaces veths routes xfrm_ex || return $ksft_skip
+	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 fc00:3::2 || true
+	rc=0
+	run_cmd ${ns_s1} grep -vw 0 /proc/net/xfrm_stat
+	echo ${out} | grep -q 'XfrmOutStateDirError'|| rc=1
+	return ${rc}
+}
+
+test_sa_dir_in_data_exception_ipv6() {
+	setup vm_set_v6s2 namespaces veths routes xfrm_ex || return $ksft_skip
+	run_cmd ${ns_b} ping -W 5 -w 4 -c 1 fc00:1::1 || true
+	rc=0
+	run_cmd ${ns_s1} grep -vw 0 /proc/net/xfrm_stat
+	echo ${out} | grep -q 'XfrmInStateDirError'|| rc=1
 	return ${rc}
 }
 
