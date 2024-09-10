@@ -797,3 +797,19 @@ int xfrm_init_replay(struct xfrm_state *x, struct netlink_ext_ack *extack)
 	return 0;
 }
 EXPORT_SYMBOL(xfrm_init_replay);
+
+void xfrm_sync_oseq(struct xfrm_state *x, struct xfrm_state *orig)
+{
+	switch (x->repl_mode) {
+	case XFRM_REPLAY_MODE_LEGACY:
+		x->replay.oseq = orig->replay.oseq;
+		break;
+
+	case XFRM_REPLAY_MODE_BMP:
+	case XFRM_REPLAY_MODE_ESN:
+		x->replay_esn->oseq = orig->replay_esn->oseq;
+		x->replay_esn->oseq_hi = orig->replay_esn->oseq_hi;
+		break;
+	}
+}
+EXPORT_SYMBOL(xfrm_sync_oseq);

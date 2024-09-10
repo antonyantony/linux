@@ -685,6 +685,7 @@ struct xfrm_migrate {
 	u8			mode;
 	u16			reserved;
 	u32			old_reqid;
+	u32			new_reqid;
 	u16			old_family;
 	u16			new_family;
 };
@@ -1906,6 +1907,7 @@ int xfrm_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 		 struct xfrm_encap_tmpl *encap, u32 if_id,
 		 struct netlink_ext_ack *extack,
 		 struct xfrm_user_offload *xuo);
+void xfrm_sync_oseq(struct xfrm_state *x, struct xfrm_state *orig);
 #endif
 
 int km_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, __be16 sport);
@@ -2011,8 +2013,7 @@ static inline unsigned int xfrm_replay_state_esn_len(struct xfrm_replay_state_es
 }
 
 #ifdef CONFIG_XFRM_MIGRATE
-static inline int xfrm_replay_clone(struct xfrm_state *x,
-				     struct xfrm_state *orig)
+static inline int xfrm_replay_clone(struct xfrm_state *x, struct xfrm_state *orig)
 {
 
 	x->replay_esn = kmemdup(orig->replay_esn,

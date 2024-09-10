@@ -1966,7 +1966,8 @@ static inline int clone_security(struct xfrm_state *x, struct xfrm_sec_ctx *secu
 
 static struct xfrm_state *xfrm_state_clone_and_setup(struct xfrm_state *orig,
 					   struct xfrm_encap_tmpl *encap,
-					   struct xfrm_migrate *m)
+					   struct xfrm_migrate *m,
+					   struct netlink_ext_ack *extack)
 {
 	struct net *net = xs_net(orig);
 	struct xfrm_state *x = xfrm_state_alloc(net);
@@ -1978,7 +1979,6 @@ static struct xfrm_state *xfrm_state_clone_and_setup(struct xfrm_state *orig,
 	memcpy(&x->lft, &orig->lft, sizeof(x->lft));
 	x->props.mode = orig->props.mode;
 	x->props.replay_window = orig->props.replay_window;
-	x->props.reqid = orig->props.reqid;
 	x->props.saddr = orig->props.saddr;
 
 	if (orig->aalg) {
@@ -2058,7 +2058,10 @@ static struct xfrm_state *xfrm_state_clone_and_setup(struct xfrm_state *orig,
 			goto error;
 	}
 
-
+	if (orig->props.reqid != m->new_reqid)
+		x->props.reqid = m->new_reqid;
+	else
+		x->props.reqid = orig->props.reqid;
 	x->props.family = m->new_family;
 	memcpy(&x->id.daddr, &m->new_daddr, sizeof(x->id.daddr));
 	memcpy(&x->props.saddr, &m->new_saddr, sizeof(x->props.saddr));
@@ -2132,7 +2135,7 @@ struct xfrm_state *xfrm_state_migrate(struct xfrm_state *x,
 {
 	struct xfrm_state *xc;
 
-	xc = xfrm_state_clone_and_setup(x, encap, m);
+	xc = xfrm_state_clone_and_setup(x, encap, m, extack);
 	if (!xc)
 		return NULL;
 
@@ -2144,9 +2147,10 @@ struct xfrm_state *xfrm_state_migrate(struct xfrm_state *x,
 		goto error;
 
 	/* add state */
-	if (xfrm_addr_equal(&x->id.daddr, &m->new_daddr, m->new_family)) {
-		/* a care is needed when the destination address of the
-		   state is to be updated as it is a part of triplet */
+	if (xfrm_addr_equal(&x->id.daddr, &m->new_daddr, m->new_family) ||
+			x->props.reqid != xc->props.reqid) {
+		/* a care is needed when the destination address or the reqid
+		 * of the state is to be updated as it is a part of triplet */
 		xfrm_state_insert(xc);
 	} else {
 		if (xfrm_state_add(xc) < 0)
