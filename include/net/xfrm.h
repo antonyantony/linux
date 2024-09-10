@@ -613,6 +613,7 @@ struct xfrm_migrate {
 	u16			old_family;
 	u16			new_family;
 	u32			old_reqid;
+	u32			new_reqid;
 };
 
 #define XFRM_KM_TIMEOUT                30
