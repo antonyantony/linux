@@ -610,9 +610,9 @@ struct xfrm_migrate {
 	u8			proto;
 	u8			mode;
 	u16			reserved;
-	u32			reqid;
 	u16			old_family;
 	u16			new_family;
+	u32			old_reqid;
 };
 
 #define XFRM_KM_TIMEOUT                30
