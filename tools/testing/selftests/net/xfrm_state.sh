@@ -1,4 +1,4 @@
-#!/bin/bash -u
+#!/bin/bash -ue
 # SPDX-License-Identifier: GPL-2.0
 #
 # Checks for xfrm/ESP/IPsec tunnel.
@@ -25,13 +25,15 @@
 
 source lib.sh
 
+EXIT_ON_TEST_FAIL=no
 PAUSE_ON_FAIL=no
 VERBOSE=${VERBOSE:-0}
 TRACING=0
+DEBUG="yes" # not in upstream
+
 
 #               Name                          Description
 tests="
-	unreachable_ipv4		IPv4 unreachable from router r3
 	unreachable_ipv4		IPv6 unreachable from router r3
 	unreachable_gw_ipv4		IPv4 unreachable from IPsec gateway s2
 	unreachable_gw_ipv6		IPv6 unreachable from IPsec gateway s2
@@ -40,8 +42,6 @@ tests="
 	mtu_ipv4_r3			IPv4 MTU exceeded router r3
 	mtu_ipv6_r3			IPv6 MTU exceeded router r3"
 
-ns_set="a r1 s1 r2 s2 r3 b" # Network topology default
-imax=7 # number of namespaces in the test
 
 prefix4="10.1"
 prefix6="fc00"
@@ -88,31 +88,20 @@ run_test() {
 		set -e
 	fi
 
-	eval test_${tname}
-	ret=$?
+	ret=0
+	{ eval test_${tname}; } || log_test_error $?
+	# eval test_${tname}
 	fail="no"
 	[ $errexit -eq 0 ] && set +e # hack until exception is fixed
 
 	if [ $ret -eq 0 ]; then
 		printf "TEST: %-60s [ PASS ]\n" "${tdesc}"
 	elif [ $ret -eq 1 ]; then
-		printf "TEST: %-60s [FAIL]\n" "${tdesc}"
-		if [ "$VERBOSE" -eq 0 -o -n "${out}" -o -n "${out}" ]; then
-			echo "#####################################################################"
-			[ -n "${cmd}" ] && echo -e "${cmd}"
-			[ -n "${out}" ] && echo -e "${out}"
-			echo "#####################################################################"
-		fi
-		if [ "${PAUSE_ON_FAIL}" = "yes" ]; then
-			echo
-			echo "Pausing. Hit enter to continue"
-			read a
-		fi
-		err_flush
-		exit 1
+		[ "${PAUSE_ON_FAIL}" = "yes" ] && pause_on_fail
+		[ "${EXIT_ON_TEST_FAIL}" = "yes" ] && exit "${ret}"
+		ret=0
 	elif [ $ret -eq $ksft_skip ]; then
 		printf "TEST: %-60s [SKIP]\n" "${tdesc}"
-		err_flush
 	fi
 
 	return $ret
@@ -219,10 +208,12 @@ route_add() {
 }
 
 veth_add() {
-	local ns_cmd=$(nscmd $1)
-	local tn="veth${2}1"
-	local ln=${3:-eth0}
-	run_cmd ${ns_cmd} ip link add ${ln} type veth peer name ${tn}
+	local ns=$2
+	local pns=$1
+	local ns_cmd=$(nscmd ${pns})
+	local ln="eth0"
+	local rn="eth1"
+	run_cmd ${ns_cmd} ip link add ${ln} type veth peer name ${rn} netns $ns
 }
 
 setup_nft_add_icmp_filter() {
@@ -270,6 +261,9 @@ vm_set() {
 }
 
 setup_vm_set_v4() {
+	ns_set="a r1 s1 r2 s2 r3 b" # Network topology default
+	imax=$(echo "$ns_set" | wc -w)  # number of namespaces in this topology
+
 	src="10.1.3.1"
 	dst="10.1.4.2"
 	src_net="10.1.1.0/24"
@@ -283,9 +277,9 @@ setup_vm_set_v4() {
 	vm_set
 }
 
-setup_vm_set_v4x() {
+setup_vm_v4x() {
 	ns_set="a r1 s1 r2 s2 b" # Network topology: x
-	imax=6
+	imax=$(echo "$ns_set" | wc -w)  # number of namespaces in this topology
 	prefix=${prefix4}
 	s="."
 	S="."
@@ -299,7 +293,8 @@ setup_vm_set_v4x() {
 }
 
 setup_vm_set_v6() {
-	imax=7
+	ns_set="a r1 s1 r2 s2 r3 b" # Network topology default
+	imax=$(echo "$ns_set" | wc -w)  # number of namespaces in this topology
 	prefix=${prefix6}
 	s=":"
 	S="::"
@@ -312,7 +307,7 @@ setup_vm_set_v6() {
 	vm_set
 }
 
-setup_vm_set_v6x() {
+setup_vm_v6x() {
 	ns_set="a r1 s1 r2 s2 b" # Network topology: x
 	imax=6
 	prefix=${prefix6}
@@ -330,44 +325,36 @@ setup_vm_set_v6x() {
 setup_veths() {
 	i=1
 	for ns in ${ns_active}; do
-		[ ${i} = ${imax} ] && continue
-		veth_add ${ns} ${i}
-		i=$((i + 1))
-	done
-
-	j=1
-	for ns in ${ns_active}; do
-		if [ ${j} -eq 1 ]; then
-			p=${ns};
-			pj=${j}
-			j=$((j + 1))
-			continue
-		fi
-		veth_mv ${ns} "${p}" ${pj}
+		[ ${i} -eq 1 ] && p=${ns} && i=$((i + 1)) && continue
+		veth_add ${p} ${ns}
 		p=${ns}
-		pj=${j}
-		j=$((j + 1))
+		i=$((i + 1))
 	done
 }
 
-setup_routes() {
+setup_addresses() {
 	ip1=""
 	i=1
 	for ns in ${ns_active}; do
+		# s and S are separators in IPv4 s=S="." and in IPv6 s=":" and  S="::"
 		# 10.1.C.1/24
 		ip0="${prefix}${s}${i}${S}1/${prefix_len}"
-		[ "${ns}" = b ] && ip0=""
+		[ ${i} -eq ${imax} ] && ip0="" # the last one has only eth1  i.e. ip1
 		setup_addr_add ${ns} "${ip0}" "${ip1}"
 		# 10.1.C.2/24
 		ip1="${prefix}${s}${i}${S}2/${prefix_len}"
 		i=$((i + 1))
 	done
+}
 
+
+setup_routes() {
 	i=1
-	nhr=""
+	nhr="" #next hop forward route
+
 	for ns in ${ns_active}; do
-		nhf="${prefix}${s}${i}${S}2"
-		[ "${ns}" = b ] && nhf=""
+		nhf="${prefix}${s}${i}${S}2" # next hot forward route
+		[ ${i} -eq ${imax} ] && nhf=""
 		route_add ${ns} "${nhf}" "${nhr}" ${i}
 		nhr="${prefix}${s}${i}${S}1"
 		i=$((i + 1))
@@ -431,12 +418,28 @@ trace() {
 	sleep 1
 }
 
-cleanup() {
+pause_on_fail() {
+	echo
+	echo "Pausing. Hit enter to continue"
+	read a
+}
+
+
+log_test_error() {
+	local e=${1-""}
+
 	if [ "${fail}" = "yes" -a -n "${desc}" ]; then
 		printf "TEST: %-60s [ FAIL ]\n" "${desc}"
 		[ -n "${cmd}" ] && echo -e "${cmd}\n"
 		[ -n "${out}" ] && echo -e "${out}\n"
 	fi
+	ret=${e}
+}
+
+cleanup() {
+	log_test_error
+
+	[ "${PAUSE_ON_FAIL}" = "yes" ] && pause_on_fail
 
 	cleanup_all_ns
 }
@@ -476,7 +479,7 @@ link_get_mtu() {
 }
 
 test_unreachable_ipv6() {
-	setup vm_set_v6 namespaces veths routes xfrm nft_add_icmpv6_filter || return $ksft_skip
+	setup vm_set_v6 namespaces veths addresses routes xfrm nft_add_icmpv6_filter || return $ksft_skip
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 fc00:6::2
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 fc00:6::3 || true
 	rc=0
@@ -485,7 +488,7 @@ test_unreachable_ipv6() {
 }
 
 test_unreachable_gw_ipv6() {
-	setup vm_set_v6x namespaces veths routes xfrm nft_add_icmpv6_filter || return $ksft_skip
+	setup vm_v6x namespaces veths addresses routes xfrm nft_add_icmpv6_filter || return $ksft_skip
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 fc00:5::2
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 fc00:5::3 || true
 	rc=0
@@ -494,7 +497,7 @@ test_unreachable_gw_ipv6() {
 }
 
 test_unreachable_gw_ipv4() {
-	setup vm_set_v4x namespaces veths routes xfrm nft_add_icmp_filter || return $ksft_skip
+	setup vm_v4x namespaces veths addresses routes xfrm nft_add_icmp_filter || return $ksft_skip
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 10.1.5.2
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 10.1.5.3 || true
 	rc=0
@@ -503,7 +506,7 @@ test_unreachable_gw_ipv4() {
 }
 
 test_unreachable_ipv4() {
-	setup vm_set_v4 namespaces veths routes xfrm nft_add_icmp_filter || return $ksft_skip
+	setup vm_set_v4 namespaces veths addresses routes xfrm nft_add_icmp_filter || return $ksft_skip
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 10.1.6.2
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 10.1.6.3 || true
 	rc=0
@@ -512,7 +515,7 @@ test_unreachable_ipv4() {
 }
 
 test_mtu_ipv4_r2() {
-	setup vm_set_v4 namespaces veths routes xfrm nft_add_icmp_filter || return $ksft_skip
+	setup vm_set_v4 namespaces veths addresses routes xfrm nft_add_icmp_filter || return $ksft_skip
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 10.1.6.2
 	run_cmd ${ns_r2} ip route replace 10.1.3.0/24 dev eth1 src 10.1.3.2 mtu 1300
 	run_cmd ${ns_r2} ip route replace 10.1.4.0/24 dev eth0 src 10.1.4.1 mtu 1300
@@ -524,7 +527,7 @@ test_mtu_ipv4_r2() {
 }
 
 test_mtu_ipv6_r2() {
-	setup vm_set_v6 namespaces veths routes xfrm nft_add_icmpv6_filter || return $ksft_skip
+	setup vm_set_v6 namespaces veths addresses routes xfrm nft_add_icmpv6_filter || return $ksft_skip
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 fc00:6::2
 	run_cmd ${ns_r2} ip -6 route replace fc00:3::/64 dev eth1 metric 256 src fc00:3::2 mtu 1300
 	run_cmd ${ns_r2} ip -6 route replace fc00:4::/64 dev eth0 metric 256 src fc00:4::1 mtu 1300
@@ -536,7 +539,7 @@ test_mtu_ipv6_r2() {
 }
 
 test_mtu_ipv4_r3() {
-	setup vm_set_v4 namespaces veths routes xfrm nft_add_icmp_filter || return $ksft_skip
+	setup vm_set_v4 namespaces veths addresses routes xfrm nft_add_icmp_filter || return $ksft_skip
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 10.1.6.2
 	run_cmd ${ns_r3} ip route replace 10.1.6.0/24 dev eth0 src 10.1.6.1 mtu 1300
 	run_cmd ${ns_a} ping -M do -s 1350 -W 5 -w 4 -c 1 10.1.6.2 || true
@@ -546,7 +549,7 @@ test_mtu_ipv4_r3() {
 }
 
 test_mtu_ipv6_r3() {
-	setup vm_set_v6 namespaces veths routes xfrm nft_add_icmpv6_filter || return $ksft_skip
+	setup vm_set_v6 namespaces veths addresses routes xfrm nft_add_icmpv6_filter || return $ksft_skip
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 fc00:6::2
 	run_cmd ${ns_r3} ip -6 route replace fc00:6::/64 dev eth1 metric 256 src fc00:6::1 mtu 1300
 	run_cmd ${ns_a} ping -M do -s 1300 -W 5 -w 4 -c 1 fc00:6::2 || true
@@ -577,9 +580,11 @@ all_skipped=true
 out=
 cmd=
 
-while getopts :pv o
+while getopts :epv o
+
 do
 	case $o in
+	e) EXIT_ON_TEST_FAIL=yes;;
 	p) PAUSE_ON_FAIL=yes;;
 	v) VERBOSE=$(( VERBOSE + 1 ));;
 	*) usage;;
