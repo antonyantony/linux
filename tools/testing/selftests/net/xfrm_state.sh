@@ -347,7 +347,6 @@ setup_addresses() {
 	done
 }
 
-
 setup_routes() {
 	i=1
 	nhr="" #next hop forward route
@@ -511,6 +510,8 @@ test_unreachable_ipv4() {
 	run_cmd ${ns_a} ping -W 5 -w 4 -c 1 10.1.6.3 || true
 	rc=0
 	echo -e "$out" | grep -q -E 'From 10.1.5.2 icmp_seq.* Destination' || rc=1
+	echo  "AA Pause press enter "
+	pause_on_fail
 	return ${rc}
 }
 
@@ -592,6 +593,7 @@ do
 done
 shift $(($OPTIND-1))
 
+# next line end with a TAB.
 IFS="	
 "
 
