@@ -33,6 +33,7 @@
  * @family	- Protocol family to match on (AF_INET/AF_INET6)
  */
 struct bpf_xfrm_state_opts {
+	u8 dir;
 	s32 error;
 	s32 netns_id;
 	u32 mark;
@@ -96,6 +97,12 @@ bpf_xdp_get_xfrm_state(struct xdp_md *ctx, struct bpf_xfrm_state_opts *opts, u32
 		put_net(net);
 	if (!x)
 		opts->error = -ENOENT;
+
+	if (x && x->dir != opts->dir) {
+		opts->error = -ENOENT;
+		xfrm_state_put(x);
+		x = NULL;
+	}
 
 	return x;
 }
