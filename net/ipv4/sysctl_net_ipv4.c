@@ -38,6 +38,8 @@ static int tcp_syn_retries_max = MAX_TCP_SYNCNT;
 static int tcp_syn_linear_timeouts_max = MAX_TCP_SYNCNT;
 static unsigned long ip_ping_group_range_min[] = { 0, 0 };
 static unsigned long ip_ping_group_range_max[] = { GID_T_MAX, GID_T_MAX };
+static unsigned long ip_esp_ping_group_range_min[] = { 0, 0 };
+static unsigned long ip_esp_ping_group_range_max[] = { GID_T_MAX, GID_T_MAX };
 static u32 u32_max_div_HZ = UINT_MAX / HZ;
 static int one_day_secs = 24 * 3600;
 static u32 fib_multipath_hash_fields_all_mask __maybe_unused =
@@ -177,6 +179,41 @@ static int ipv4_ping_group_range(const struct ctl_table *table, int write,
 		.mode = table->mode,
 		.extra1 = &ip_ping_group_range_min,
 		.extra2 = &ip_ping_group_range_max,
+	};
+
+	inet_get_ping_group_range_table(table, &low, &high);
+	urange[0] = from_kgid_munged(user_ns, low);
+	urange[1] = from_kgid_munged(user_ns, high);
+	ret = proc_doulongvec_minmax(&tmp, write, buffer, lenp, ppos);
+
+	if (write && ret == 0) {
+		low = make_kgid(user_ns, urange[0]);
+		high = make_kgid(user_ns, urange[1]);
+		if (!gid_valid(low) || !gid_valid(high))
+			return -EINVAL;
+		if (urange[1] < urange[0] || gid_lt(high, low)) {
+			low = make_kgid(&init_user_ns, 1);
+			high = make_kgid(&init_user_ns, 0);
+		}
+		set_ping_group_range(table, low, high);
+	}
+
+	return ret;
+}
+
+static int ipv4_esp_ping_group_range(const struct ctl_table *table, int write,
+				     void *buffer, size_t *lenp, loff_t *ppos)
+{
+	struct user_namespace *user_ns = current_user_ns();
+	int ret;
+	unsigned long urange[2];
+	kgid_t low, high;
+	const struct ctl_table tmp = {
+		.data = &urange,
+		.maxlen = sizeof(urange),
+		.mode = table->mode,
+		.extra1 = &ip_esp_ping_group_range_min,
+		.extra2 = &ip_esp_ping_group_range_max,
 	};
 
 	inet_get_ping_group_range_table(table, &low, &high);
@@ -722,6 +759,13 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(gid_t)*2,
 		.mode		= 0644,
 		.proc_handler	= ipv4_ping_group_range,
+	},
+	{
+		.procname	= "esp_ping_group_range",
+		.data		= &init_net.ipv4.esp_ping_group_range.range,
+		.maxlen		= sizeof(gid_t) * 2,
+		.mode		= 0644,
+		.proc_handler	= ipv4_esp_ping_group_range,
 	},
 #ifdef CONFIG_NET_L3_MASTER_DEV
 	{

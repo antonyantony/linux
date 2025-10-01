@@ -109,6 +109,7 @@
 #include <net/sock.h>
 #include <net/raw.h>
 #include <net/icmp.h>
+#include <net/esp_ping.h>
 #include <net/inet_common.h>
 #include <net/ip_tunnels.h>
 #include <net/xfrm.h>
@@ -1194,7 +1195,15 @@ static struct inet_protosw inetsw_array[] =
 	       .prot =       &raw_prot,
 	       .ops =        &inet_sockraw_ops,
 	       .flags =      INET_PROTOSW_REUSE,
-       }
+	},
+	{
+		.type =       SOCK_DGRAM,
+		.protocol =   IPPROTO_ESP,
+		.prot =       &esp_ping_prot,
+		.ops =        &inet_sockraw_ops,
+		.flags =      INET_PROTOSW_REUSE,
+	},
+
 };
 
 #define INETSW_ARRAY_LEN ARRAY_SIZE(inetsw_array)
@@ -1796,6 +1805,8 @@ static __net_init int inet_init_net(struct net *net)
 	 */
 	net->ipv4.ping_group_range.range[0] = make_kgid(&init_user_ns, 1);
 	net->ipv4.ping_group_range.range[1] = make_kgid(&init_user_ns, 0);
+	net->ipv4.esp_ping_group_range.range[0] = make_kgid(&init_user_ns, 1);
+	net->ipv4.esp_ping_group_range.range[1] = make_kgid(&init_user_ns, 0);
 
 	/* Default values for sysctl-controlled parameters.
 	 * We set them here, in case sysctl is not compiled.
@@ -1980,6 +1991,7 @@ static int __init inet_init(void)
 	raw_init();
 
 	ping_init();
+	esp_ping_init();
 
 	/*
 	 *	Set the ICMP layer up

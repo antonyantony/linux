@@ -153,6 +153,25 @@ struct ip_iptfs_cc_hdr {
 	__be32 techo;
 };
 
+/* Plain ESP ping SPI values (draft-ietf-ipsecme-esp-ping, IANA reserved) */
+#define ESP_PING_SPI_REQUEST	7	/* outer ESP SPI: echo request */
+#define ESP_PING_SPI_REPLY	8	/* outer ESP SPI: echo reply   */
+
+/* AGGFRAG sub-types for ESP echo (draft-ietf-ipsecme-encrypted-esp-ping, IANA pending) */
+#define ESP_ECHO_REQUEST	2	/* TBD2: initiator to responder */
+#define ESP_ECHO_RESPONSE	3	/* TBD3: responder to initiator */
+#define ESP_ECHO_FLAG_R		0x80	/* flags bit 7: return_spi field present */
+
+struct esp_echo_hdr {
+	__u8	sub_type;	/* AGGFRAG dispatch byte, offset 0 */
+	__u8	flags;		/* bit 7: R flag; bits 6-0 reserved, must be zero */
+	__be16	data_len;	/* payload bytes after complete fixed header (excl. return_spi) */
+	__be16	id;		/* echo identifier, set by initiator */
+	__be16	seq;		/* sequence number */
+	/* when (flags & ESP_ECHO_FLAG_R): __be32 return_spi follows here */
+};
+/* sizeof(struct esp_echo_hdr) == 8 bytes (fixed portion only) */
+
 /* index values for the variables in ipv4_devconf */
 enum
 {
