@@ -22,6 +22,7 @@
 #include <net/ip6_tunnel.h>
 #include <net/dst_metadata.h>
 #include <net/hotdata.h>
+#include <net/esp_ping.h>
 
 #include "xfrm_inout.h"
 
@@ -591,6 +592,8 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 
 		x = xfrm_input_state_lookup(net, mark, daddr, spi, nexthdr, family);
 		if (x == NULL) {
+			if (nexthdr == IPPROTO_ESP && esp_recv(skb, spi))
+				return 0;
 			secpath_reset(skb);
 			XFRM_INC_STATS(net, LINUX_MIB_XFRMINNOSTATES);
 			xfrm_audit_state_notfound(skb, family, spi, seq);
