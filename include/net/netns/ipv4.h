@@ -28,6 +28,11 @@ struct ping_group_range {
 	kgid_t		range[2];
 };
 
+struct esp_ping_group_range {
+	seqlock_t	lock;
+	kgid_t		range[2];
+};
+
 struct inet_hashinfo;
 
 struct inet_timewait_death_row {
@@ -251,6 +256,7 @@ struct netns_ipv4 {
 	int sysctl_igmp_qrv;
 
 	struct ping_group_range ping_group_range;
+	struct esp_ping_group_range esp_ping_group_range;
 
 	atomic_t dev_addr_genid;
 
