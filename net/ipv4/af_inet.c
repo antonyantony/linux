@@ -109,6 +109,7 @@
 #include <net/sock.h>
 #include <net/raw.h>
 #include <net/icmp.h>
+#include <net/esp_ping.h>
 #include <net/inet_common.h>
 #include <net/ip_tunnels.h>
 #include <net/xfrm.h>
@@ -1187,7 +1188,7 @@ static struct inet_protosw inetsw_array[] =
        {
 		.type =       SOCK_DGRAM,
 		.protocol =   IPPROTO_ESP,
-		.prot =       &ping_prot,
+		.prot =       &esp_ping_prot,
 		.ops =        &inet_sockraw_ops,
 		.flags =      INET_PROTOSW_REUSE,
        },

@@ -19,7 +19,7 @@
 #define GID_T_MAX (((gid_t)~0U) - 1)
 
 /* Compatibility glue so we can support IPv6 when it's compiled as a module */
-struct esp_esp_pingv6_ops {
+struct esp_pingv6_ops {
 	int (*ipv6_recv_error)(struct sock *sk, struct msghdr *msg, int len,
 			       int *addr_len);
 	void (*ip6_datagram_recv_common_ctl)(struct sock *sk,
@@ -46,8 +46,16 @@ extern struct proto esp_ping_prot;
 extern struct esp_pingv6_ops esp_pingv6_ops;
 #endif
 
+/* uapi/linux/esp_ping.h ? */
+struct esp_pingh {
+	__be32 spi_out;
+	__be32 spi_in; // AA support a List of SPIs later
+	__be16 id;
+	__be16 seq;
+};
+
 struct esp_pingfakehdr {
-	struct icmphdr icmph;
+	struct esp_pingh esp_pingh;
 	struct msghdr *msg;
 	sa_family_t family;
 	__wsum wcheck;

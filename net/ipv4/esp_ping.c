@@ -639,11 +639,11 @@ static int esp_ping_v4_push_pending_frames(struct sock *sk, struct esp_pingfakeh
 
 	if (!skb)
 		return 0;
-	pfh->wcheck = csum_partial((char *)&pfh->icmph,
-		sizeof(struct icmphdr), pfh->wcheck);
-	pfh->icmph.checksum = csum_fold(pfh->wcheck);
-	memcpy(icmp_hdr(skb), &pfh->icmph, sizeof(struct icmphdr));
-	skb->ip_summed = CHECKSUM_NONE;
+	pfh->wcheck = csum_partial((char *)&pfh->esp_pingh,
+		sizeof(struct esp_pingh), pfh->wcheck);
+	// pfh->esp_pingh.checksum = csum_fold(pfh->wcheck);
+	// memcpy(icmp_hdr(skb), &pfh->esp_pingh, sizeof(struct icmphdr));
+	// skb->ip_summed = CHECKSUM_NONE;
 	return ip_push_pending_frames(sk, fl4);
 }
 
@@ -700,7 +700,7 @@ static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	struct inet_sock *inet = inet_sk(sk);
 	struct ipcm_cookie ipc;
 	struct icmphdr user_icmph;
-	struct pingfakehdr pfh; // AA fixme: struct esp_pingfakehdr
+	struct esp_pingfakehdr pfh; // AA fixme: struct esp_pingfakehdr
 	struct rtable *rt = NULL;
 	struct ip_options_data opt_copy;
 	int free = 0;
@@ -1012,30 +1012,6 @@ struct proto esp_ping_prot = {
 EXPORT_SYMBOL(esp_ping_prot);
 
 
-struct proto esp_ping_prot = {
-	.name =		"ESP-PING",
-	.owner =	THIS_MODULE,
-	.init =		esp_ping_init_sock,
-	.close =	esp_ping_close,
-	.pre_connect =	esp_ping_pre_connect,
-	.connect =	ip4_datagram_connect,
-	.disconnect =	__udp_disconnect,
-	.setsockopt =	ip_setsockopt,
-	.getsockopt =	ip_getsockopt,
-	.sendmsg =	esp_ping_v4_sendmsg,
-	.recvmsg =	esp_ping_recvmsg,
-	.bind =		esp_ping_bind,
-	.backlog_rcv =	esp_ping_queue_rcv_skb,
-	.release_cb =	ip4_datagram_release_cb,
-	.hash =		esp_ping_hash,
-	.unhash =	esp_ping_unhash,
-	.get_port =	esp_ping_get_port,
-	.put_port =	esp_ping_unhash,
-	.obj_size =	sizeof(struct inet_sock),
-};
-EXPORT_SYMBOL(esp_ping_prot);
-
-
 #ifdef CONFIG_PROC_FS
 
 static struct sock *esp_ping_get_first(struct seq_file *seq, int start)
@@ -1153,7 +1129,7 @@ static int esp_ping_v4_seq_show(struct seq_file *seq, void *v)
 {
 	seq_setwidth(seq, 127);
 	if (v == SEQ_START_TOKEN) {
-		s eq_puts(seq, "  sl  local_address rem_address   st tx_queue "
+		s eq_puts(seq, "  sl  spi rem_address   st tx_queue "
 			   "rx_queue tr tm->when retrnsmt   uid  timeout "
 			   "inode ref pointer drops");
 	} else {
@@ -1174,7 +1150,7 @@ static const struct seq_operations esp_ping_v4_seq_ops = {
 
 static int __net_init esp_ping_v4_proc_init_net(struct net *net)
 {
-	if (!proc_create_net("icmp", 0444, net->proc_net, &esp_ping_v4_seq_ops,
+	if (!proc_create_net("esp", 0444, net->proc_net, &esp_ping_v4_seq_ops,
 				sizeof(struct esp_ping_iter_state)))
 		return -ENOMEM;
 	return 0;
@@ -1182,7 +1158,7 @@ static int __net_init esp_ping_v4_proc_init_net(struct net *net)
 
 static void __net_exit esp_ping_v4_proc_exit_net(struct net *net)
 {
-	remove_proc_entry("icmp", net->proc_net);
+	remove_proc_entry("esp", net->proc_net);
 }
 
 static struct pernet_operations esp_ping_v4_net_ops = {
