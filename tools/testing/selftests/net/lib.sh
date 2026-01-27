@@ -208,7 +208,7 @@ setup_ns()
 		fi
 
 		# Some test may setup/remove same netns multi times
-		if [ -z "${!ns_name}" ]; then
+		if [ -z "${!ns_name:-}" ]; then
 			eval "${ns_name}=${ns_name,,}${suffix}"
 		else
 			cleanup_ns "${!ns_name}"
