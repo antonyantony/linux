@@ -518,6 +518,7 @@ struct xfrm_user_migrate_state {
 	__u16 reserved;
 	__u32 new_reqid;
 	struct xfrm_mark old_mark;
+	__u32 flags;
 };
 
 /* Flags for xfrm_user_migrate_state.flags */
