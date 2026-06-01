@@ -2489,6 +2489,7 @@ xfrm_tmpl_resolve_one(struct xfrm_policy *policy, const struct flowi *fl,
 	struct net *net = xp_net(policy);
 	int nx;
 	int i, error;
+	unsigned short prev_family = family;
 	xfrm_address_t *daddr = xfrm_flowi_daddr(fl, family);
 	xfrm_address_t *saddr = xfrm_flowi_saddr(fl, family);
 	xfrm_address_t tmp;
@@ -2517,6 +2518,9 @@ xfrm_tmpl_resolve_one(struct xfrm_policy *policy, const struct flowi *fl,
 					goto fail;
 				local = &tmp;
 			}
+		} else if (prev_family != tmpl->encap_family) {
+			error = -EINVAL;
+			goto fail;
 		}
 
 		x = xfrm_state_find(remote, local, fl, tmpl, policy, &error,
@@ -2532,6 +2536,7 @@ xfrm_tmpl_resolve_one(struct xfrm_policy *policy, const struct flowi *fl,
 			xfrm[nx++] = x;
 			daddr = remote;
 			saddr = local;
+			prev_family = tmpl->encap_family;
 			continue;
 		}
 		if (x) {
