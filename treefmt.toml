@@ -1,0 +1,5 @@
+
+[formatter.nix]
+command = "alejandra"
+includes = ["*.nix"]
+excludes = ["nix/sources.nix"]
