@@ -2043,7 +2043,7 @@ static struct xfrm_state *xfrm_state_clone_and_setup(struct xfrm_state *orig,
 	if (xfrm_replay_clone(x, orig))
 		goto error;
 
-	x->mark = m->new_mark ? *m->new_mark : m->old_mark;
+	x->mark = m->new_mark ? *m->new_mark : orig->mark;
 
 	x->props.smark = m->smark;
 
