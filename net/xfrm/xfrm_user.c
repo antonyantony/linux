@@ -3369,6 +3369,12 @@ static int xfrm_do_migrate_state(struct sk_buff *skb, struct nlmsghdr *nlh,
 		return -ESRCH;
 	}
 
+	if (x->mark.v != um->old_mark.v || x->mark.m != um->old_mark.m) {
+		NL_SET_ERR_MSG(extack, "SA mark mismatch: broad mask matched wrong SA");
+		err = -ESRCH;
+		goto out;
+	}
+
 	if (um->flags & XFRM_MIGRATE_STATE_UPDATE_H2H_SEL) {
 		u8 prefixlen = (x->props.family == AF_INET6) ? 128 : 32;
 
