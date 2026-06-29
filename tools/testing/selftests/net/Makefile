@@ -173,6 +173,7 @@ TEST_GEN_FILES := \
 # end of TEST_GEN_FILES
 
 TEST_GEN_PROGS := \
+	esp_ping_plain \
 	bind_timewait \
 	bind_wildcard \
 	epoll_busy_poll \
