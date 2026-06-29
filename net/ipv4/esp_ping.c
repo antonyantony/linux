@@ -41,6 +41,7 @@
 #include <net/checksum.h>
 #include <net/ip_fib.h>
 #include <net/l3mdev.h>
+#include <net/xfrm.h>
 
 #if IS_ENABLED(CONFIG_IPV6)
 #include <linux/in6.h>
@@ -656,10 +657,169 @@ drop:
 }
 EXPORT_SYMBOL_GPL(esp_ping_plain_rcv);
 
+/*
+ * Handle IP_PKTINFO (source address + oif override) and SOL_SOCKET cmsgs
+ * (SO_MARK via __sock_cmsg_send(), already permission-checked) on send,
+ * same as every other IPv4 protocol's sendmsg (see ip_cmsg_send(), used by
+ * ping.c/raw.c/udp.c). Deliberately narrower than ip_cmsg_send() itself:
+ * it also handles IP_RETOPTS, which allocates ipc->opt and would need
+ * cleanup on every one of esp_ping_v4_sendmsg()'s several early-return
+ * paths for a feature (IP source routing) esp-ping has no use for. Nothing
+ * here allocates, so callers don't need to free anything.
+ */
+static int esp_ping_cmsg_send(struct sock *sk, struct msghdr *msg,
+			      struct ipcm_cookie *ipc)
+{
+	struct in_pktinfo *info;
+	struct cmsghdr *cmsg;
+	int err;
+
+	for_each_cmsghdr(cmsg, msg) {
+		if (!CMSG_OK(msg, cmsg))
+			return -EINVAL;
+
+		if (cmsg->cmsg_level == SOL_SOCKET) {
+			err = __sock_cmsg_send(sk, cmsg, &ipc->sockc);
+			if (err)
+				return err;
+			continue;
+		}
+
+		if (cmsg->cmsg_level != SOL_IP)
+			continue;
+
+		if (cmsg->cmsg_type != IP_PKTINFO)
+			return -EINVAL;
+		if (cmsg->cmsg_len != CMSG_LEN(sizeof(*info)))
+			return -EINVAL;
+
+		info = (struct in_pktinfo *)CMSG_DATA(cmsg);
+		if (info->ipi_ifindex)
+			ipc->oif = info->ipi_ifindex;
+		ipc->addr = info->ipi_spec_dst.s_addr;
+	}
+	return 0;
+}
+
 static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 {
-	/* TODO: implement in Step 4 (draft-ietf-ipsecme-encrypted-esp-ping) */
-	return -EOPNOTSUPP;
+	struct net *net = sock_net(sk);
+	struct inet_sock *inet = inet_sk(sk);
+	struct ipcm_cookie ipc;
+	struct esp_echo_hdr user_hdr;
+	struct xfrm_state *x;
+	struct sk_buff *skb;
+	struct esp_echo_hdr *eh;
+	struct rtable *rt;
+	__be32 daddr, saddr;
+	struct flowi4 fl4;
+	u16 data_len;
+	int payload_len;
+	int err;
+
+	if (len < sizeof(user_hdr))
+		return -EINVAL;
+	if (memcpy_from_msg(&user_hdr, msg, sizeof(user_hdr)))
+		return -EFAULT;
+	if (user_hdr.sub_type != ESP_ECHO_REQUEST &&
+	    user_hdr.sub_type != ESP_ECHO_RESPONSE)
+		return -EINVAL;
+
+	data_len = ntohs(user_hdr.data_len);
+
+	if (msg->msg_name) {
+		DECLARE_SOCKADDR(struct sockaddr_in *, usin, msg->msg_name);
+
+		if (msg->msg_namelen < sizeof(*usin))
+			return -EINVAL;
+		if (usin->sin_family != AF_INET)
+			return -EAFNOSUPPORT;
+		daddr = usin->sin_addr.s_addr;
+	} else {
+		if (sk->sk_state != TCP_ESTABLISHED)
+			return -EDESTADDRREQ;
+		daddr = inet->inet_daddr;
+	}
+
+	ipcm_init_sk(&ipc, inet);
+
+	/* IP_PKTINFO/SO_MARK cmsg override addr/oif/mark for this call only,
+	 * same as ping.c/raw.c/udp.c's sendmsg (see esp_ping_cmsg_send()).
+	 */
+	if (msg->msg_controllen) {
+		err = esp_ping_cmsg_send(sk, msg, &ipc);
+		if (err)
+			return err;
+	}
+	saddr = ipc.addr;
+
+	/* fl4 carries saddr (from bind/-I <ip>/IP_PKTINFO) and oif (from
+	 * SO_BINDTODEVICE/-I <dev>/IP_PKTINFO, falling back to IP_UNICAST_IF)
+	 * so both the SPD path and the pinned-SA path honour -I.
+	 */
+	flowi4_init_output(&fl4, ipc.oif ?: READ_ONCE(inet->uc_index),
+			   ipc.sockc.mark,
+			   ipc.tos & INET_DSCP_MASK, RT_SCOPE_UNIVERSE,
+			   IPPROTO_ESP, inet_sk_flowi_flags(sk),
+			   daddr, saddr, 0, 0, sk_uid(sk));
+
+	security_sk_classify_flow(sk, flowi4_to_flowi_common(&fl4));
+	rt = ip_route_output_flow(net, &fl4, sk);
+	if (IS_ERR(rt))
+		return PTR_ERR(rt);
+
+	err = -EINVAL;
+	x = rt->dst.xfrm;
+	if (!x || !x->mode_cbs)
+		goto put_rt;
+
+	err = -EPERM;
+	if (!(x->props.extra_flags & XFRM_SA_XFLAG_ESP_PING))
+		goto put_rt;
+
+	payload_len = sizeof(struct esp_echo_hdr)
+		    + ((user_hdr.flags & ESP_ECHO_FLAG_R) ? sizeof(__be32) : 0)
+		    + data_len;
+
+	err = -ENOMEM;
+	skb = alloc_skb(LL_RESERVED_SPACE(rt->dst.dev) + rt->dst.header_len
+			+ payload_len + x->props.trailer_len, GFP_KERNEL);
+	if (!skb)
+		goto put_rt;
+
+	skb_reserve(skb, LL_RESERVED_SPACE(rt->dst.dev) + rt->dst.header_len);
+	skb_dst_set(skb, &rt->dst);
+
+	eh = skb_put(skb, sizeof(*eh));
+	eh->sub_type = user_hdr.sub_type;
+	eh->flags    = user_hdr.flags;
+	eh->data_len = user_hdr.data_len;
+	/* requests get our own port; responses keep the requester's id */
+	eh->id       = user_hdr.sub_type == ESP_ECHO_RESPONSE ?
+			user_hdr.id : inet->inet_sport;
+	eh->seq      = user_hdr.seq;
+
+	err = -EFAULT;
+	if (user_hdr.flags & ESP_ECHO_FLAG_R) {
+		__be32 return_spi;
+
+		if (memcpy_from_msg(&return_spi, msg, sizeof(return_spi)))
+			goto free_skb;
+		skb_put_data(skb, &return_spi, sizeof(return_spi));
+	}
+	if (data_len && !copy_from_iter_full(skb_put(skb, data_len), data_len,
+					     &msg->msg_iter))
+		goto free_skb;
+
+	skb->protocol = htons(ETH_P_IP);
+	return xfrm_output(sk, skb);
+
+free_skb:
+	kfree_skb(skb);
+	return err;
+put_rt:
+	ip_rt_put(rt);
+	return err;
 }
 
 int esp_ping_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int flags)
