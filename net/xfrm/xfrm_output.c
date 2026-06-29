@@ -314,6 +314,32 @@ static int xfrm4_tunnel_encap_add(struct xfrm_state *x, struct sk_buff *skb)
 	return 0;
 }
 
+int xfrm4_aggfrag_encap_add(struct xfrm_state *x, struct sk_buff *skb)
+{
+	struct dst_entry *dst = skb_dst(skb);
+	struct iphdr *top_iph;
+
+	skb_reset_inner_network_header(skb);
+	skb_reset_inner_transport_header(skb);
+
+	skb_set_network_header(skb, -(x->props.header_len - x->props.enc_hdr_len));
+	skb->mac_header = skb->network_header + offsetof(struct iphdr, protocol);
+	skb->transport_header = skb->network_header + sizeof(*top_iph);
+
+	top_iph = ip_hdr(skb);
+	top_iph->ihl = 5;
+	top_iph->version = 4;
+	top_iph->protocol = IPPROTO_AGGFRAG;
+	top_iph->tos = 0;
+	top_iph->frag_off = htons(IP_DF);
+	top_iph->ttl = ip4_dst_hoplimit(xfrm_dst_child(dst));
+	top_iph->saddr = x->props.saddr.a4;
+	top_iph->daddr = x->id.daddr.a4;
+	ip_select_ident(dev_net(dst->dev), skb, NULL);
+
+	return 0;
+}
+
 #if IS_ENABLED(CONFIG_IPV6)
 static int xfrm6_tunnel_encap_add(struct xfrm_state *x, struct sk_buff *skb)
 {
@@ -347,6 +373,31 @@ static int xfrm6_tunnel_encap_add(struct xfrm_state *x, struct sk_buff *skb)
 	top_iph->hop_limit = ip6_dst_hoplimit(xfrm_dst_child(dst));
 	top_iph->saddr = *(struct in6_addr *)&x->props.saddr;
 	top_iph->daddr = *(struct in6_addr *)&x->id.daddr;
+	return 0;
+}
+
+int xfrm6_aggfrag_encap_add(struct xfrm_state *x, struct sk_buff *skb)
+{
+	struct dst_entry *dst = skb_dst(skb);
+	struct ipv6hdr *top_iph;
+
+	skb_reset_inner_network_header(skb);
+	skb_reset_inner_transport_header(skb);
+
+	skb_set_network_header(skb, -x->props.header_len + x->props.enc_hdr_len);
+	skb->mac_header = skb->network_header + offsetof(struct ipv6hdr, nexthdr);
+	skb->transport_header = skb->network_header + sizeof(*top_iph);
+
+	top_iph = ipv6_hdr(skb);
+	top_iph->version = 6;
+	top_iph->priority = 0;
+	memset(top_iph->flow_lbl, 0, sizeof(top_iph->flow_lbl));
+	top_iph->nexthdr = IPPROTO_AGGFRAG;
+	ipv6_change_dsfield(top_iph, 0, 0);
+	top_iph->hop_limit = ip6_dst_hoplimit(xfrm_dst_child(dst));
+	top_iph->saddr = *(struct in6_addr *)&x->props.saddr;
+	top_iph->daddr = *(struct in6_addr *)&x->id.daddr;
+
 	return 0;
 }
 
@@ -411,6 +462,12 @@ static int xfrm4_prepare_output(struct xfrm_state *x, struct sk_buff *skb)
 
 	IPCB(skb)->flags |= IPSKB_XFRM_TUNNEL_SIZE;
 	skb->protocol = htons(ETH_P_IP);
+
+	if (IPCB(skb)->flags & IPSKB_XFRM_AGGFRAG_PAYLOAD) {
+		if (!x->mode_cbs)
+			return -EINVAL;
+		return xfrm4_aggfrag_encap_add(x, skb);
+	}
 
 	switch (x->props.mode) {
 	case XFRM_MODE_BEET:

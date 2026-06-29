@@ -60,6 +60,7 @@ struct inet_skb_parm {
 #define IPSKB_NOPOLICY		BIT(8)
 #define IPSKB_MULTIPATH		BIT(9)
 #define IPSKB_MCROUTE		BIT(10)
+#define IPSKB_XFRM_AGGFRAG_PAYLOAD	BIT(11)
 
 	u16			frag_max_size;
 };

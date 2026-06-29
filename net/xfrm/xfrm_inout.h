@@ -67,4 +67,9 @@ static inline void xfrm4_beet_make_header(struct sk_buff *skb)
 	iph->ttl = XFRM_MODE_SKB_CB(skb)->ttl;
 }
 
+int xfrm4_aggfrag_encap_add(struct xfrm_state *x, struct sk_buff *skb);
+#if IS_ENABLED(CONFIG_IPV6)
+int xfrm6_aggfrag_encap_add(struct xfrm_state *x, struct sk_buff *skb);
+#endif
+
 #endif
