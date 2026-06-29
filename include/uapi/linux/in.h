@@ -176,6 +176,8 @@ struct in_addr {
 						 * to the given list of SPIs.
 						 */
 
+#define ESP_PING_RECV_SPI		1	/* cmsg: __be32 SPI of decrypting SA */
+
 #define MCAST_EXCLUDE	0
 #define MCAST_INCLUDE	1
 
