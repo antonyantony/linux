@@ -252,11 +252,17 @@ static void inet_get_esp_ping_group_range_net(struct net *net, kgid_t *low,
 int esp_ping_init_sock(struct sock *sk)
 {
 	struct net *net = sock_net(sk);
-	kgid_t group = current_egid();
 	struct group_info *group_info;
-	int i;
+	kgid_t group = current_egid();
+	struct esp_ping_sock *psk;
 	kgid_t low, high;
 	int ret = 0;
+	int i;
+
+	psk = kzalloc_obj(*psk, GFP_KERNEL);
+	if (!psk)
+		return -ENOMEM;
+	sk->sk_user_data = psk;
 
 	if (sk->sk_family == AF_INET6)
 		sk->sk_ipv6only = 1;
@@ -280,6 +286,10 @@ int esp_ping_init_sock(struct sock *sk)
 
 out_release_group:
 	put_group_info(group_info);
+	if (ret) {
+		kfree(psk);
+		sk->sk_user_data = NULL;
+	}
 	return ret;
 }
 EXPORT_SYMBOL_GPL(esp_ping_init_sock);
@@ -290,6 +300,8 @@ void esp_ping_close(struct sock *sk, long timeout)
 		 inet_sk(sk), inet_sk(sk)->inet_num);
 	pr_debug("isk->refcnt = %d\n", refcount_read(&sk->sk_refcnt));
 
+	kfree(sk->sk_user_data);
+	sk->sk_user_data = NULL;
 	sk_common_release(sk);
 }
 EXPORT_SYMBOL_GPL(esp_ping_close);

@@ -43,6 +43,7 @@
 #include <net/transp_v6.h>
 #endif
 #include <net/ip_fib.h>
+#include <net/esp_ping.h>
 
 #include <linux/errqueue.h>
 #include <linux/uaccess.h>
@@ -1346,6 +1347,85 @@ int do_ip_setsockopt(struct sock *sk, int level, int optname,
 			break;
 		err = xfrm_user_policy(sk, optname, optval, optlen);
 		break;
+
+	case IP_ESP_PING_SPI: {
+		struct esp_ping_sock *psk;
+		struct xfrm_state *x;
+		__be32 spi;
+
+		err = -ENOPROTOOPT;
+		if (sk->sk_protocol != IPPROTO_ESP)
+			break;
+		err = -EINVAL;
+		if (optlen < sizeof(u32))
+			break;
+		if (copy_from_sockptr(&spi, optval, sizeof(spi))) {
+			err = -EFAULT;
+			break;
+		}
+		if (spi) {
+			/* verify the SA exists */
+			x = xfrm_state_lookup_byspi(net, spi, AF_INET);
+			if (!x) {
+				err = -ENOENT;
+				break;
+			}
+			xfrm_state_put(x);
+		}
+		psk = esp_ping_sk(sk);
+		if (!psk) {
+			err = -EINVAL;
+			break;
+		}
+		psk->spi_out = spi;
+		err = 0;
+		break;
+	}
+
+	case IP_ESP_PING_LISTEN: {
+		struct esp_ping_sock *psk;
+		__be32 *spis = NULL;
+		int n = 0, i;
+
+		err = -ENOPROTOOPT;
+		if (sk->sk_protocol != IPPROTO_ESP)
+			break;
+		err = -EINVAL;
+		if (optlen % sizeof(__be32))
+			break;
+
+		n = optlen / sizeof(__be32);
+		if (n) {
+			spis = memdup_sockptr(optval, optlen);
+			if (IS_ERR(spis)) {
+				err = PTR_ERR(spis);
+				break;
+			}
+			/* SPI 0 never appears on the wire (RFC 4303); treat
+			 * it as an explicit wildcard, same as an empty list.
+			 */
+			for (i = 0; i < n; i++) {
+				if (spis[i] == 0) {
+					kfree(spis);
+					spis = NULL;
+					n = 0;
+					break;
+				}
+			}
+		}
+
+		psk = esp_ping_sk(sk);
+		if (!psk) {
+			kfree(spis);
+			err = -EINVAL;
+			break;
+		}
+		kfree(psk->listen_spi);
+		psk->listen_spi = spis;
+		psk->n_listen_spi = n;
+		err = 0;
+		break;
+	}
 
 	default:
 		err = -ENOPROTOOPT;

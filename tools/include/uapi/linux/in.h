@@ -168,6 +168,7 @@ struct in_addr {
 #define IP_UNICAST_IF			50
 #define IP_LOCAL_PORT_RANGE		51
 #define IP_PROTOCOL			52
+#define IP_ESP_PING_SPI			53	/* pin encrypted ESP ping to specific SA SPI */
 
 #define MCAST_EXCLUDE	0
 #define MCAST_INCLUDE	1

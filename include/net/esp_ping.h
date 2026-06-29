@@ -29,6 +29,25 @@ struct esp_pingv6_ops {
 			     const struct net_device *dev, int strict);
 };
 
+struct esp_ping_sock {
+	__be32   spi_out;      /* 0 = use SPD; non-zero = pinned SA SPI */
+
+	/* Receive-only listener (responder/monitor): gets inbound
+	 * echo-request fan-out. Set via IP_ESP_PING_LISTEN; independent of
+	 * spi_out.
+	 *   n_listen_spi <  0: not a listener (default)
+	 *   n_listen_spi == 0: listener, no filter — receives all SAs
+	 *   n_listen_spi >  0: listener, filtered to listen_spi[] only
+	 */
+	__be32  *listen_spi;
+	int      n_listen_spi;
+};
+
+static inline struct esp_ping_sock *esp_ping_sk(const struct sock *sk)
+{
+	return (struct esp_ping_sock *)sk->sk_user_data;
+}
+
 struct esp_ping_iter_state {
 	struct seq_net_private  p;
 	int			bucket;
