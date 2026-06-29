@@ -11,6 +11,8 @@
 
 #include <net/netns/hash.h>
 
+struct xfrm_state;
+
 /* ESP_PING_HTABLE_SIZE must be power of 2 */
 #define ESP_PING_HTABLE_SIZE	64
 #define ESP_PING_HTABLE_MASK	(ESP_PING_HTABLE_SIZE-1)
@@ -48,6 +50,11 @@ static inline struct esp_ping_sock *esp_ping_sk(const struct sock *sk)
 	return (struct esp_ping_sock *)sk->sk_user_data;
 }
 
+struct esp_ping_skb_cb {
+	__be32  spi;   /* SPI of the decrypting SA */
+};
+#define ESP_PING_SKB_CB(skb) ((struct esp_ping_skb_cb *)((skb)->cb))
+
 struct esp_ping_iter_state {
 	struct seq_net_private  p;
 	int			bucket;
@@ -72,6 +79,10 @@ int  esp_ping_queue_rcv_skb(struct sock *sk, struct sk_buff *skb);
 enum skb_drop_reason esp_ping_rcv(struct sk_buff *skb);
 void esp_ping_plain_rcv(struct sk_buff *skb);
 bool esp_recv(struct sk_buff *skb, __be32 spi);
+void esp_ping_deliver_request(struct net *net, struct xfrm_state *x,
+			      struct sk_buff *skb);
+void esp_ping_deliver_response(struct net *net, struct xfrm_state *x,
+			       struct sk_buff *skb);
 
 #ifdef CONFIG_PROC_FS
 void *esp_ping_seq_start(struct seq_file *seq, loff_t *pos, sa_family_t family);

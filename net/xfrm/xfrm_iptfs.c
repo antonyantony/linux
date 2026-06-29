@@ -17,6 +17,7 @@
 #include <net/xfrm.h>
 
 #include <crypto/aead.h>
+#include <net/esp_ping.h>
 
 #include "xfrm_inout.h"
 #include "trace_iptfs.h"
@@ -1227,6 +1228,12 @@ static void iptfs_input_ordered(struct xfrm_state *x, struct sk_buff *skb)
 	xtfs = x->mode_data;
 	net = xs_net(x);
 
+	/* skb->protocol comes to us cleared sometimes; esp_ping_lookup()
+	 * needs it to route ESP_ECHO_RESPONSE to the right AF socket table.
+	 */
+	skb->protocol = x->outer_mode.family == AF_INET ? htons(ETH_P_IP) :
+							  htons(ETH_P_IPV6);
+
 	seq = __esp_seq(skb);
 
 	/* Large enough to hold both types of header */
@@ -1253,6 +1260,16 @@ static void iptfs_input_ordered(struct xfrm_state *x, struct sk_buff *skb)
 			goto done;
 		}
 		data += remaining;
+	} else if (ipth->subtype == ESP_ECHO_REQUEST) {
+		skb_abort_seq_read(&skbseq);
+		esp_ping_deliver_request(net, x, skb);
+		consumed = true;
+		goto done;
+	} else if (ipth->subtype == ESP_ECHO_RESPONSE) {
+		skb_abort_seq_read(&skbseq);
+		esp_ping_deliver_response(net, x, skb);
+		consumed = true;
+		goto done;
 	} else if (ipth->subtype != IPTFS_SUBTYPE_BASIC) {
 		XFRM_INC_STATS(net, LINUX_MIB_XFRMINHDRERROR);
 		goto done;

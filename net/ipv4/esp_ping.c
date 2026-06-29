@@ -263,6 +263,7 @@ int esp_ping_init_sock(struct sock *sk)
 	psk = kzalloc_obj(*psk, GFP_KERNEL);
 	if (!psk)
 		return -ENOMEM;
+	psk->n_listen_spi = -1;   /* not a listener until IP_ESP_PING_LISTEN */
 	sk->sk_user_data = psk;
 
 	if (sk->sk_family == AF_INET6)
@@ -297,10 +298,14 @@ EXPORT_SYMBOL_GPL(esp_ping_init_sock);
 
 void esp_ping_close(struct sock *sk, long timeout)
 {
+	struct esp_ping_sock *psk = esp_ping_sk(sk);
+
 	pr_debug("%s(sk=%p,sk->num=%u)\n", __func__,
 		 inet_sk(sk), inet_sk(sk)->inet_num);
 	pr_debug("isk->refcnt = %d\n", refcount_read(&sk->sk_refcnt));
 
+	if (psk)
+		kfree(psk->listen_spi);
 	kfree(sk->sk_user_data);
 	sk->sk_user_data = NULL;
 	sk_common_release(sk);
@@ -932,6 +937,101 @@ int esp_ping_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 	return __esp_ping_queue_rcv_skb(sk, skb) ? -1 : 0;
 }
 EXPORT_SYMBOL_GPL(esp_ping_queue_rcv_skb);
+
+/* Does listener @psk want requests decrypted by SA @spi? */
+static bool esp_ping_listener_matches(const struct esp_ping_sock *psk, __be32 spi)
+{
+	int i;
+
+	if (!psk || psk->n_listen_spi < 0)
+		return false;		/* not a listener */
+	if (psk->n_listen_spi == 0)
+		return true;		/* listener, no filter: all SAs */
+
+	for (i = 0; i < psk->n_listen_spi; i++) {
+		if (psk->listen_spi[i] == spi)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * Deliver decrypted ESP echo request to every open esp-ping socket in this
+ * netns that has opted in as a listener (IP_ESP_PING_LISTEN) and whose SPI
+ * filter (if any) matches — e.g. the real strongSwan responder plus any
+ * passive "ip monitor"-style observer — instead of an arbitrary single
+ * socket. Mirrors raw_v4_input()'s clone-to-all delivery to raw sockets.
+ *
+ * Listening is an explicit, independent opt-in rather than something
+ * inferred from spi_out or sk_state: an initiator (e.g. BusyBox's ping -E)
+ * wants only its own response via esp_ping_deliver_response()'s per-id
+ * lookup, regardless of whether it pins an SA via IP_ESP_PING_SPI or
+ * relies on the SPD, so pinning cannot double as the listen signal.
+ */
+void esp_ping_deliver_request(struct net *net, struct xfrm_state *x,
+			      struct sk_buff *skb)
+{
+	struct sock *sk;
+	int i, delivered = 0;
+
+	if (!(x->props.extra_flags & XFRM_SA_XFLAG_ESP_PING))
+		goto drop;
+
+	if (!pskb_may_pull(skb, sizeof(struct esp_echo_hdr)))
+		goto drop;
+
+	for (i = 0; i < ESP_PING_HTABLE_SIZE; i++) {
+		sk_for_each_rcu(sk, &esp_ping_table.hash[i]) {
+			struct esp_ping_sock *psk = esp_ping_sk(sk);
+			struct sk_buff *clone;
+
+			if (!net_eq(sock_net(sk), net) ||
+			    !esp_ping_listener_matches(psk, x->id.spi))
+				continue;
+
+			clone = skb_clone(skb, GFP_ATOMIC);
+			if (!clone)
+				continue;
+
+			ESP_PING_SKB_CB(clone)->spi = x->id.spi;
+			if (__esp_ping_queue_rcv_skb(sk, clone) ==
+			    SKB_NOT_DROPPED_YET)
+				delivered = 1;
+		}
+	}
+
+	kfree_skb_reason(skb, delivered ? SKB_CONSUMED : SKB_DROP_REASON_NO_SOCKET);
+	return;
+drop:
+	kfree_skb_reason(skb, SKB_DROP_REASON_NO_SOCKET);
+}
+EXPORT_SYMBOL_GPL(esp_ping_deliver_request);
+
+/* deliver decrypted ESP echo response to the originating socket */
+void esp_ping_deliver_response(struct net *net, struct xfrm_state *x,
+			       struct sk_buff *skb)
+{
+	struct esp_echo_hdr *h;
+	struct sock *sk;
+
+	if (!(x->props.extra_flags & XFRM_SA_XFLAG_ESP_PING))
+		goto drop;
+
+	if (!pskb_may_pull(skb, sizeof(struct esp_echo_hdr)))
+		goto drop;
+
+	h = (struct esp_echo_hdr *)skb->data;
+	sk = esp_ping_lookup(net, skb, ntohs(h->id));
+	if (!sk)
+		goto drop;
+
+	ESP_PING_SKB_CB(skb)->spi = x->id.spi;
+	__esp_ping_queue_rcv_skb(sk, skb);
+	return;
+drop:
+	kfree_skb_reason(skb, SKB_DROP_REASON_NO_SOCKET);
+}
+EXPORT_SYMBOL_GPL(esp_ping_deliver_response);
 
 /* draft-ietf-ipsecme-esp-ping-01: deliver an incoming SPI=8 reply to its socket */
 enum skb_drop_reason esp_ping_rcv(struct sk_buff *skb)
