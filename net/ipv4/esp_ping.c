@@ -60,7 +60,6 @@ static struct esp_ping_table esp_ping_table;
 struct esp_pingv6_ops esp_pingv6_ops;
 EXPORT_SYMBOL_GPL(esp_pingv6_ops);
 
-static u16 esp_ping_port_rover;
 
 static inline u32 esp_ping_hashfn(const struct net *net, u32 num, u32 mask)
 {
@@ -85,14 +84,14 @@ int esp_ping_get_port(struct sock *sk, unsigned short ident)
 	isk = inet_sk(sk);
 	spin_lock(&esp_ping_table.lock);
 	if (ident == 0) {
+		struct net *net = sock_net(sk);
 		u32 i;
-		u16 result = esp_ping_port_rover + 1;
+		u16 result = (u16)atomic_read(&net->ipv4.esp_ping_port_rover) + 1;
 
 		for (i = 0; i < (1L << 16); i++, result++) {
 			if (!result)
 				result++; /* avoid zero */
-			hlist = esp_ping_hashslot(&esp_ping_table, sock_net(sk),
-						  result);
+			hlist = esp_ping_hashslot(&esp_ping_table, net, result);
 			sk_for_each(sk2, hlist) {
 				isk2 = inet_sk(sk2);
 
@@ -101,7 +100,7 @@ int esp_ping_get_port(struct sock *sk, unsigned short ident)
 			}
 
 			/* found */
-			esp_ping_port_rover = result;
+			atomic_set(&net->ipv4.esp_ping_port_rover, result);
 			ident = result;
 			break;
 next_port:
@@ -722,6 +721,9 @@ static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	int payload_len;
 	int err;
 
+	if (msg->msg_flags & MSG_OOB)
+		return -EOPNOTSUPP;
+
 	if (len < sizeof(user_hdr))
 		return -EINVAL;
 	if (memcpy_from_msg(&user_hdr, msg, sizeof(user_hdr)))
@@ -904,6 +906,12 @@ int esp_ping_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int flags)
 #endif
 	} else {
 		WARN_ON_ONCE(1);
+	}
+
+	if (ESP_PING_SKB_CB(skb)->spi) {
+		__be32 spi = ESP_PING_SKB_CB(skb)->spi;
+
+		put_cmsg(msg, IPPROTO_ESP, ESP_PING_RECV_SPI, sizeof(spi), &spi);
 	}
 
 	err = copied;
@@ -1241,6 +1249,7 @@ static int __net_init esp_ping_v4_proc_init_net(struct net *net)
 	if (!proc_create_net("esp", 0444, net->proc_net, &esp_ping_v4_seq_ops,
 			     sizeof(struct esp_ping_iter_state)))
 		return -ENOMEM;
+	atomic_set(&net->ipv4.esp_ping_port_rover, get_random_u16());
 	return 0;
 }
 

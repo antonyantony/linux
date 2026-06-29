@@ -170,6 +170,8 @@ struct in_addr {
 #define IP_PROTOCOL			52
 #define IP_ESP_PING_SPI			53	/* pin encrypted ESP ping to specific SA SPI */
 
+#define ESP_PING_RECV_SPI		1	/* cmsg: __be32 SPI of decrypting SA */
+
 #define MCAST_EXCLUDE	0
 #define MCAST_INCLUDE	1
 

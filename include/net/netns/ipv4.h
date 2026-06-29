@@ -269,6 +269,7 @@ struct netns_ipv4 {
 	struct ping_group_range ping_group_range;
 	u16			ping_port_rover;
 	struct esp_ping_group_range esp_ping_group_range;
+	atomic_t		esp_ping_port_rover;
 
 	atomic_t dev_addr_genid;
 
