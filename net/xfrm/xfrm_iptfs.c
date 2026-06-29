@@ -2352,99 +2352,6 @@ static enum hrtimer_restart iptfs_delay_timer(struct hrtimer *me)
 }
 
 /**
- * iptfs_encap_add_ipv4() - add outer encaps
- * @x: xfrm state
- * @skb: the packet
- *
- * This was originally taken from xfrm4_tunnel_encap_add. The reason for the
- * copy is that IP-TFS/AGGFRAG can have different functionality for how to set
- * the TOS/DSCP bits. Sets the protocol to a different value and doesn't do
- * anything with inner headers as they aren't pointing into a normal IP
- * singleton inner packet.
- *
- * Return: 0 on success or a negative error code on failure
- */
-static int iptfs_encap_add_ipv4(struct xfrm_state *x, struct sk_buff *skb)
-{
-	struct dst_entry *dst = skb_dst(skb);
-	struct iphdr *top_iph;
-
-	skb_reset_inner_network_header(skb);
-	skb_reset_inner_transport_header(skb);
-
-	skb_set_network_header(skb, -(x->props.header_len - x->props.enc_hdr_len));
-	skb->mac_header = skb->network_header + offsetof(struct iphdr, protocol);
-	skb->transport_header = skb->network_header + sizeof(*top_iph);
-
-	top_iph = ip_hdr(skb);
-	top_iph->ihl = 5;
-	top_iph->version = 4;
-	top_iph->protocol = IPPROTO_AGGFRAG;
-
-	/* As we have 0, fractional, 1 or N inner packets there's no obviously
-	 * correct DSCP mapping to inherit. ECN should be cleared per RFC9347
-	 * 3.1.
-	 */
-	top_iph->tos = 0;
-
-	top_iph->frag_off = htons(IP_DF);
-	top_iph->ttl = ip4_dst_hoplimit(xfrm_dst_child(dst));
-	top_iph->saddr = x->props.saddr.a4;
-	top_iph->daddr = x->id.daddr.a4;
-	ip_select_ident(dev_net(dst->dev), skb, NULL);
-
-	return 0;
-}
-
-#if IS_ENABLED(CONFIG_IPV6)
-/**
- * iptfs_encap_add_ipv6() - add outer encaps
- * @x: xfrm state
- * @skb: the packet
- *
- * This was originally taken from xfrm6_tunnel_encap_add. The reason for the
- * copy is that IP-TFS/AGGFRAG can have different functionality for how to set
- * the flow label and TOS/DSCP bits. It also sets the protocol to a different
- * value and doesn't do anything with inner headers as they aren't pointing into
- * a normal IP singleton inner packet.
- *
- * Return: 0 on success or a negative error code on failure
- */
-static int iptfs_encap_add_ipv6(struct xfrm_state *x, struct sk_buff *skb)
-{
-	struct dst_entry *dst = skb_dst(skb);
-	struct ipv6hdr *top_iph;
-	int dsfield;
-
-	skb_reset_inner_network_header(skb);
-	skb_reset_inner_transport_header(skb);
-
-	skb_set_network_header(skb, -x->props.header_len + x->props.enc_hdr_len);
-	skb->mac_header = skb->network_header + offsetof(struct ipv6hdr, nexthdr);
-	skb->transport_header = skb->network_header + sizeof(*top_iph);
-
-	top_iph = ipv6_hdr(skb);
-	top_iph->version = 6;
-	top_iph->priority = 0;
-	memset(top_iph->flow_lbl, 0, sizeof(top_iph->flow_lbl));
-	top_iph->nexthdr = IPPROTO_AGGFRAG;
-
-	/* As we have 0, fractional, 1 or N inner packets there's no obviously
-	 * correct DSCP mapping to inherit. ECN should be cleared per RFC9347
-	 * 3.1.
-	 */
-	dsfield = 0;
-	ipv6_change_dsfield(top_iph, 0, dsfield);
-
-	top_iph->hop_limit = ip6_dst_hoplimit(xfrm_dst_child(dst));
-	top_iph->saddr = *(struct in6_addr *)&x->props.saddr;
-	top_iph->daddr = *(struct in6_addr *)&x->id.daddr;
-
-	return 0;
-}
-#endif
-
-/**
  * iptfs_prepare_output() -  prepare the skb for output
  * @x: xfrm state
  * @skb: the packet
@@ -2457,10 +2364,10 @@ static int iptfs_encap_add_ipv6(struct xfrm_state *x, struct sk_buff *skb)
 static int iptfs_prepare_output(struct xfrm_state *x, struct sk_buff *skb)
 {
 	if (x->outer_mode.family == AF_INET)
-		return iptfs_encap_add_ipv4(x, skb);
+		return xfrm4_aggfrag_encap_add(x, skb);
 	if (x->outer_mode.family == AF_INET6) {
 #if IS_ENABLED(CONFIG_IPV6)
-		return iptfs_encap_add_ipv6(x, skb);
+		return xfrm6_aggfrag_encap_add(x, skb);
 #else
 		return -EAFNOSUPPORT;
 #endif
