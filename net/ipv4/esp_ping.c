@@ -662,6 +662,33 @@ drop:
 EXPORT_SYMBOL_GPL(esp_ping_plain_rcv);
 
 /*
+ * Pull an ESP_PING_SEND_SPI cmsg out of @msg, if present. Lets a single
+ * long-lived socket (e.g. a strongSwan responder) pin a different reply SA
+ * per sendmsg() call — e.g. to honour a request's return_spi (R flag) —
+ * without disturbing the socket's sticky IP_ESP_PING_SPI (spi_out).
+ *
+ * Returns 1 and sets *spi if found, 0 if absent, negative on a malformed
+ * cmsg.
+ */
+static int esp_ping_get_send_spi(struct msghdr *msg, __be32 *spi)
+{
+	struct cmsghdr *cmsg;
+
+	for_each_cmsghdr(cmsg, msg) {
+		if (!CMSG_OK(msg, cmsg))
+			return -EINVAL;
+		if (cmsg->cmsg_level != IPPROTO_ESP ||
+		    cmsg->cmsg_type != ESP_PING_SEND_SPI)
+			continue;
+		if (cmsg->cmsg_len != CMSG_LEN(sizeof(*spi)))
+			return -EINVAL;
+		*spi = *(__be32 *)CMSG_DATA(cmsg);
+		return 1;
+	}
+	return 0;
+}
+
+/*
  * Handle IP_PKTINFO (source address + oif override) and SOL_SOCKET cmsgs
  * (SO_MARK via __sock_cmsg_send(), already permission-checked) on send,
  * same as every other IPv4 protocol's sendmsg (see ip_cmsg_send(), used by
@@ -709,9 +736,12 @@ static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 {
 	struct net *net = sock_net(sk);
 	struct inet_sock *inet = inet_sk(sk);
+	struct esp_ping_sock *psk = esp_ping_sk(sk);
+	__be32 send_spi = psk ? psk->spi_out : 0;
 	struct ipcm_cookie ipc;
 	struct esp_echo_hdr user_hdr;
 	struct xfrm_state *x;
+	struct dst_entry *dst;
 	struct sk_buff *skb;
 	struct esp_echo_hdr *eh;
 	struct rtable *rt;
@@ -731,6 +761,11 @@ static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	if (user_hdr.sub_type != ESP_ECHO_REQUEST &&
 	    user_hdr.sub_type != ESP_ECHO_RESPONSE)
 		return -EINVAL;
+
+	/* ESP_PING_SEND_SPI cmsg overrides spi_out for this call only. */
+	err = esp_ping_get_send_spi(msg, &send_spi);
+	if (err < 0)
+		return err;
 
 	data_len = ntohs(user_hdr.data_len);
 
@@ -771,31 +806,64 @@ static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 			   daddr, saddr, 0, 0, sk_uid(sk));
 
 	security_sk_classify_flow(sk, flowi4_to_flowi_common(&fl4));
-	rt = ip_route_output_flow(net, &fl4, sk);
-	if (IS_ERR(rt))
-		return PTR_ERR(rt);
 
-	err = -EINVAL;
-	x = rt->dst.xfrm;
-	if (!x || !x->mode_cbs)
-		goto put_rt;
+	if (send_spi) {
+		xfrm_address_t xdaddr = { .a4 = daddr };
+
+		/* Pinned SA: look up state directly, bypass SPD. send_spi is
+		 * either the ESP_PING_SEND_SPI cmsg override for this call,
+		 * or the socket's sticky spi_out.
+		 */
+		x = xfrm_state_lookup(net, ipc.sockc.mark, &xdaddr,
+				      send_spi, IPPROTO_ESP, AF_INET);
+		if (!x)
+			return -ENOENT;
+
+		/* Plain route to SA peer — no XFRM policy involvement. */
+		rt = __ip_route_output_key(net, &fl4);
+		if (IS_ERR(rt)) {
+			xfrm_state_put(x);
+			return PTR_ERR(rt);
+		}
+
+		/* Build 1-SA xfrm_dst; steals refs to x and rt on success. */
+		dst = xfrm_dst_create_for_state(net, x, rt,
+						flowi4_to_flowi(&fl4));
+		if (IS_ERR(dst)) {
+			xfrm_state_put(x);
+			ip_rt_put(rt);
+			return PTR_ERR(dst);
+		}
+		x = dst->xfrm;
+	} else {
+		/* SPD path: ip_route_output_flow calls xfrm_lookup_route. */
+		rt = ip_route_output_flow(net, &fl4, sk);
+		if (IS_ERR(rt))
+			return PTR_ERR(rt);
+		dst = &rt->dst;
+		x = dst->xfrm;
+		if (!x || !x->mode_cbs) {
+			err = -EINVAL;
+			goto put_dst;
+		}
+	}
 
 	err = -EPERM;
 	if (!(x->props.extra_flags & XFRM_SA_XFLAG_ESP_PING))
-		goto put_rt;
+		goto put_dst;
 
 	payload_len = sizeof(struct esp_echo_hdr)
 		    + ((user_hdr.flags & ESP_ECHO_FLAG_R) ? sizeof(__be32) : 0)
 		    + data_len;
 
 	err = -ENOMEM;
-	skb = alloc_skb(LL_RESERVED_SPACE(rt->dst.dev) + rt->dst.header_len
+	skb = alloc_skb(LL_RESERVED_SPACE(dst->dev) + dst->header_len
 			+ payload_len + x->props.trailer_len, GFP_KERNEL);
 	if (!skb)
-		goto put_rt;
+		goto put_dst;
 
-	skb_reserve(skb, LL_RESERVED_SPACE(rt->dst.dev) + rt->dst.header_len);
-	skb_dst_set(skb, &rt->dst);
+	skb_reserve(skb, LL_RESERVED_SPACE(dst->dev) + dst->header_len);
+	skb_dst_set(skb, dst);
 
 	eh = skb_put(skb, sizeof(*eh));
 	eh->sub_type = user_hdr.sub_type;
@@ -819,13 +887,16 @@ static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		goto free_skb;
 
 	skb->protocol = htons(ETH_P_IP);
-	return xfrm_output(sk, skb);
+	err = xfrm_output(sk, skb);
+	if (err)
+		return err;
+	return len;
 
 free_skb:
 	kfree_skb(skb);
 	return err;
-put_rt:
-	ip_rt_put(rt);
+put_dst:
+	dst_release(dst);
 	return err;
 }
 

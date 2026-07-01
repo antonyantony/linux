@@ -177,6 +177,11 @@ struct in_addr {
 						 */
 
 #define ESP_PING_RECV_SPI		1	/* cmsg: __be32 SPI of decrypting SA */
+#define ESP_PING_SEND_SPI		2	/* cmsg: __be32 SPI to pin this send to,
+						 * overriding IP_ESP_PING_SPI for this
+						 * sendmsg() only (socket's spi_out left
+						 * untouched)
+						 */
 
 #define MCAST_EXCLUDE	0
 #define MCAST_INCLUDE	1

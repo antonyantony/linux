@@ -48,6 +48,7 @@
 #include <net/inet_dscp.h>
 
 #include "xfrm_hash.h"
+#include "xfrm_internal.h"
 
 #define XFRM_QUEUE_TMO_MIN ((unsigned)(HZ/10))
 #define XFRM_QUEUE_TMO_MAX ((unsigned)(60*HZ))
@@ -185,6 +186,7 @@ static const struct rhashtable_params xfrm_pol_inexact_params;
 static void xfrm_init_pmtu(struct xfrm_dst **bundle, int nr);
 static int stale_bundle(struct dst_entry *dst);
 static int xfrm_bundle_ok(struct xfrm_dst *xdst);
+
 static void xfrm_policy_queue_process(struct timer_list *t);
 
 static void __xfrm_policy_link(struct xfrm_policy *pol, int dir);
@@ -2599,7 +2601,7 @@ static dscp_t xfrm_get_dscp(const struct flowi *fl, int family)
 	return 0;
 }
 
-static inline struct xfrm_dst *xfrm_alloc_dst(struct net *net, int family)
+struct xfrm_dst *xfrm_alloc_dst(struct net *net, int family)
 {
 	const struct xfrm_policy_afinfo *afinfo = xfrm_policy_get_afinfo(family);
 	struct dst_ops *dst_ops;
@@ -2632,8 +2634,8 @@ static inline struct xfrm_dst *xfrm_alloc_dst(struct net *net, int family)
 	return xdst;
 }
 
-static void xfrm_init_path(struct xfrm_dst *path, struct dst_entry *dst,
-			   int nfheader_len)
+void xfrm_init_path(struct xfrm_dst *path, struct dst_entry *dst,
+		    int nfheader_len)
 {
 	if (dst->ops->family == AF_INET6) {
 		path->path_cookie = rt6_get_cookie(dst_rt6_info(dst));
@@ -2641,8 +2643,8 @@ static void xfrm_init_path(struct xfrm_dst *path, struct dst_entry *dst,
 	}
 }
 
-static inline int xfrm_fill_dst(struct xfrm_dst *xdst, struct net_device *dev,
-				const struct flowi *fl)
+int xfrm_fill_dst(struct xfrm_dst *xdst, struct net_device *dev,
+		  const struct flowi *fl)
 {
 	const struct xfrm_policy_afinfo *afinfo =
 		xfrm_policy_get_afinfo(xdst->u.dst.ops->family);
