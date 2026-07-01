@@ -1866,6 +1866,8 @@ static inline int xfrm_user_policy(struct sock *sk, int optname,
 #endif
 
 struct dst_entry *__xfrm_dst_lookup(int family, const struct xfrm_dst_lookup_params *params);
+struct dst_entry *xfrm_dst_create_for_state(struct net *net, struct xfrm_state *x,
+					    struct rtable *rt, const struct flowi *fl);
 
 struct xfrm_policy *xfrm_policy_alloc(struct net *net, gfp_t gfp);
 
