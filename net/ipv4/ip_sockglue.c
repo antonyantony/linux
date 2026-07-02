@@ -1364,8 +1364,13 @@ int do_ip_setsockopt(struct sock *sk, int level, int optname,
 			break;
 		}
 		if (spi) {
-			/* verify the SA exists */
-			x = xfrm_state_lookup_byspi(net, spi, AF_INET);
+			/* verify the SA exists -- sk_family so this also
+			 * works for an AF_INET6 ESP-PING socket pinning an
+			 * IPv6 SA (see IP_ESP_PING_SPI handling for both
+			 * families: SOL_IP options reach AF_INET6 SOCK_DGRAM
+			 * sockets via ipv6_setsockopt()'s SOL_IP fallback).
+			 */
+			x = xfrm_state_lookup_byspi(net, spi, sk->sk_family);
 			if (!x) {
 				err = -ENOENT;
 				break;

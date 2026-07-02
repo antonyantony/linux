@@ -732,6 +732,31 @@ static int esp_ping_cmsg_send(struct sock *sk, struct msghdr *msg,
 	return 0;
 }
 
+/*
+ * Shared prologue for esp_ping_v4_sendmsg()/esp_ping_v6_sendmsg(): validates
+ * and consumes the user-supplied esp_echo_hdr, and applies any
+ * ESP_PING_SEND_SPI cmsg override on top of the socket's sticky spi_out
+ * (@send_spi in/out).
+ */
+int esp_ping_common_sendmsg(struct msghdr *msg, size_t len,
+			    struct esp_echo_hdr *user_hdr, __be32 *send_spi)
+{
+	if (msg->msg_flags & MSG_OOB)
+		return -EOPNOTSUPP;
+
+	if (len < sizeof(*user_hdr))
+		return -EINVAL;
+	if (memcpy_from_msg(user_hdr, msg, sizeof(*user_hdr)))
+		return -EFAULT;
+	if (user_hdr->sub_type != ESP_ECHO_REQUEST &&
+	    user_hdr->sub_type != ESP_ECHO_RESPONSE)
+		return -EINVAL;
+
+	/* ESP_PING_SEND_SPI cmsg overrides spi_out for this call only. */
+	return esp_ping_get_send_spi(msg, send_spi);
+}
+EXPORT_SYMBOL_GPL(esp_ping_common_sendmsg);
+
 static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 {
 	struct net *net = sock_net(sk);
@@ -751,19 +776,7 @@ static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	int payload_len;
 	int err;
 
-	if (msg->msg_flags & MSG_OOB)
-		return -EOPNOTSUPP;
-
-	if (len < sizeof(user_hdr))
-		return -EINVAL;
-	if (memcpy_from_msg(&user_hdr, msg, sizeof(user_hdr)))
-		return -EFAULT;
-	if (user_hdr.sub_type != ESP_ECHO_REQUEST &&
-	    user_hdr.sub_type != ESP_ECHO_RESPONSE)
-		return -EINVAL;
-
-	/* ESP_PING_SEND_SPI cmsg overrides spi_out for this call only. */
-	err = esp_ping_get_send_spi(msg, &send_spi);
+	err = esp_ping_common_sendmsg(msg, len, &user_hdr, &send_spi);
 	if (err < 0)
 		return err;
 
@@ -827,7 +840,7 @@ static int esp_ping_v4_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		}
 
 		/* Build 1-SA xfrm_dst; steals refs to x and rt on success. */
-		dst = xfrm_dst_create_for_state(net, x, rt,
+		dst = xfrm_dst_create_for_state(net, x, &rt->dst,
 						flowi4_to_flowi(&fl4));
 		if (IS_ERR(dst)) {
 			xfrm_state_put(x);
