@@ -44,6 +44,7 @@
 #include <net/udp.h>
 #include <net/tcp.h>
 #include <net/ping.h>
+#include <net/esp_ping.h>
 #include <net/protocol.h>
 #include <net/inet_common.h>
 #include <net/route.h>
@@ -1029,12 +1030,16 @@ static int __init inet6_init(void)
 	if (err)
 		goto out_unregister_raw_proto;
 
+	err = proto_register(&esp_ping_v6_prot, 1);
+	if (err)
+		goto out_unregister_ping_proto;
+
 	/* We MUST register RAW sockets before we create the ICMP6,
 	 * IGMP6, or NDISC control sockets.
 	 */
 	err = rawv6_init();
 	if (err)
-		goto out_unregister_ping_proto;
+		goto out_unregister_esp_ping_proto;
 
 	/* Register the family here so that the init calls below will
 	 * be able to create sockets. (?? is this dangerous ??)
@@ -1122,6 +1127,10 @@ static int __init inet6_init(void)
 	if (err)
 		goto pingv6_fail;
 
+	err = esp_pingv6_init();
+	if (err)
+		goto esp_pingv6_fail;
+
 	err = calipso_init();
 	if (err)
 		goto calipso_fail;
@@ -1164,6 +1173,8 @@ rpl_fail:
 seg6_fail:
 	calipso_exit();
 calipso_fail:
+	esp_pingv6_exit();
+esp_pingv6_fail:
 	pingv6_exit();
 pingv6_fail:
 	ipv6_packet_cleanup();
@@ -1210,6 +1221,8 @@ register_pernet_fail:
 	rtnl_unregister_all(PF_INET6);
 out_sock_register_fail:
 	rawv6_exit();
+out_unregister_esp_ping_proto:
+	proto_unregister(&esp_ping_v6_prot);
 out_unregister_ping_proto:
 	proto_unregister(&pingv6_prot);
 out_unregister_raw_proto:

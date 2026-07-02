@@ -3,8 +3,9 @@
  * XFRM helpers for encrypted ESP ping (draft-ietf-ipsecme-encrypted-esp-ping).
  *
  * Builds a 1-SA xfrm_dst from a pinned XFRM state and a plain route,
- * bypassing the SPD.  Used by esp_ping_v4_sendmsg() when IP_ESP_PING_SPI
- * pins a specific SA and no policy covers the gateway-to-gateway flow.
+ * bypassing the SPD.  Used by esp_ping_v4_sendmsg()/esp_ping_v6_sendmsg()
+ * when IP_ESP_PING_SPI pins a specific SA and no policy covers the
+ * gateway-to-gateway flow.
  */
 
 #include <linux/kernel.h>
@@ -18,20 +19,23 @@
  * xfrm_dst_create_for_state() - build a 1-SA xfrm_dst from a pinned state
  *     and a plain (non-XFRM) route, without consulting the SPD.
  *
- * @net: network namespace
- * @x:   XFRM state; caller's reference is transferred to the dst on success
- * @rt:  plain rtable to the SA peer; dst reference is stolen on success
- * @fl:  flow key for xfrm_fill_dst() AF-specific initialisation
+ * @net:   network namespace
+ * @x:     XFRM state; caller's reference is transferred to the dst on success
+ * @route: plain route (struct rtable or rt6_info) to the SA peer, as a
+ *         dst_entry; dst reference is stolen on success. AF-agnostic: only
+ *         the embedded dst_entry is touched, so either family's route type
+ *         works here.
+ * @fl:    flow key for xfrm_fill_dst() AF-specific initialisation
  *
  * Returns the new dst_entry (refcount 1) or ERR_PTR.  On error the caller
- * must release @x and @rt itself.
+ * must release @x and @route itself.
  */
 struct dst_entry *
 xfrm_dst_create_for_state(struct net *net, struct xfrm_state *x,
-			  struct rtable *rt, const struct flowi *fl)
+			  struct dst_entry *route, const struct flowi *fl)
 {
 	const struct xfrm_state_afinfo *afinfo;
-	struct dst_entry *inner = &rt->dst;
+	struct dst_entry *inner = route;
 	struct dst_entry *dst1;
 	struct xfrm_dst *xdst;
 	int err;

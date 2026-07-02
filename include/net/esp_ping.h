@@ -12,6 +12,7 @@
 #include <net/netns/hash.h>
 
 struct xfrm_state;
+struct esp_echo_hdr;
 
 /* ESP_PING_HTABLE_SIZE must be power of 2 */
 #define ESP_PING_HTABLE_SIZE	64
@@ -64,6 +65,7 @@ struct esp_ping_iter_state {
 extern struct proto esp_ping_prot;
 #if IS_ENABLED(CONFIG_IPV6)
 extern struct esp_pingv6_ops esp_pingv6_ops;
+extern struct proto esp_ping_v6_prot;
 #endif
 
 int  esp_ping_get_port(struct sock *sk, unsigned short ident);
@@ -73,6 +75,8 @@ void esp_ping_unhash(struct sock *sk);
 int  esp_ping_init_sock(struct sock *sk);
 void esp_ping_close(struct sock *sk, long timeout);
 int  esp_ping_bind(struct sock *sk, struct sockaddr_unsized *uaddr, int addr_len);
+int  esp_ping_common_sendmsg(struct msghdr *msg, size_t len,
+			     struct esp_echo_hdr *user_hdr, __be32 *send_spi);
 int  esp_ping_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 		      int flags);
 int  esp_ping_queue_rcv_skb(struct sock *sk, struct sk_buff *skb);
